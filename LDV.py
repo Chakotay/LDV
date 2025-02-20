@@ -22,7 +22,6 @@ Dependencies:
 - vtk
 - tqdm
 - openpyxl
-...
 
 License:
 This script is released under the FAP License.
