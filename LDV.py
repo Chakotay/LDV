@@ -5,7 +5,7 @@ Author:
 - Francisco Alves Pereira (francisco.alvespereira@cnr.it)
 
 Version: 0.9.2
-Date: 2025-02-21
+Date: 2025-02-22
 
 Description:
 This script performs data analysis on Laser Doppler Velocimetry (LDV) measurements.
