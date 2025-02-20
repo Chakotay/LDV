@@ -5,7 +5,7 @@ Author:
 - Francisco Alves Pereira (francisco.alvespereira@cnr.it)
 
 Version: 0.9.2
-Date: 2025-02-20
+Date: 2025-02-21
 
 Description:
 This script performs data analysis on Laser Doppler Velocimetry (LDV) measurements.
@@ -1226,7 +1226,6 @@ def ExtractVelocityField(Data, verbose=False):
                 SaveMAT(outFolder,Row['File'],V,verbose=False)
             if settings['ExportFormat']=='csv':
                 SaveCSV(outFolder,Row['File'],V,verbose=False)
-            #SaveMAT(outFolder,Row['File'],v2,verbose=False)
 
             pbar.desc=Row['File']
             pbar.update()
