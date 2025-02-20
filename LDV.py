@@ -24,7 +24,7 @@ Dependencies:
 - openpyxl
 
 License:
-This script is released under the MIT License.
+This script is released under the FAP License.
 
 Usage:
 python LDV.py <settings_filename>
