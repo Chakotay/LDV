@@ -177,7 +177,8 @@ def SetupLDV(f):
     GenerateDatabase;False;True to generate database
     ExternalChannels;[1,2];List of external channels to load
     AxisScaleFactor;[1.0, -1.33, -1.0];Axis scale factor (X,Y,Z)
-    ExportFormat;csv;Export format (csv,mat)
+    ExportCsv;True;Export to .csv files
+    ExportMat;False;Export to .mat files
     
     ### Phase analysis setup
     PhaseAnalysis;True;True to run phase analysis
@@ -288,7 +289,7 @@ def RunSettings(filename):
     Settings=GetSettings(Path(filename))
     #display(Settings['Value'].apply(type))
 
-    Values = ['Root', 'PropModel', 'Case', 'Interpolation', 'ExportFormat']
+    Values = ['Root', 'PropModel', 'Case', 'Interpolation']
 
     Values = ['Rref', 'Period', 'Step', 'Wleft', 'Wright', 
               'VerticalUpPhaseOffset', 'VerticalDownPhaseOffset', 
@@ -301,7 +302,8 @@ def RunSettings(filename):
     for value in Values:
         Settings.at[value,'Value'] = int(Settings.at[value,'Value'])
 
-    Values = ['GenerateDatabase', 'PhaseAnalysis',
+    Values = ['ExportCsv', 'ExportMat', 
+              'GenerateDatabase', 'PhaseAnalysis',
               'GeneratePolarPlots', 'Autoscale', 
               'Verbose', 'Overwrite',
               'ShowPhasePlots', 'ShowPolarPlots']
@@ -1222,7 +1224,7 @@ def ExtractVelocityField(Data, verbose=False):
             SaveFTH(outFolder,Row['File'],V,verbose=False)
             if settings['ExportFormat']=='mat':
                 SaveMAT(outFolder,Row['File'],V,verbose=False)
-            else:
+            if settings['ExportFormat']=='csv':
                 SaveCSV(outFolder,Row['File'],V,verbose=False)
             #SaveMAT(outFolder,Row['File'],v2,verbose=False)
 
