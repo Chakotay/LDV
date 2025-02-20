@@ -1,0 +1,53 @@
+# Setup file for LDV.py
+
+    Parameter;Value;Comment
+
+    ### General input
+    RootPath;'/home/cisco/Documents/Insean/Projects/Yamaha/Measurements/Analysis/LDV/';Root path
+    DataPath;'Data/CRP1_LDV_FdF';Data path
+    OutputPath;'Analysis/CRP1_LDV_FdF';Output path
+    Case;'unified-data';Case
+    Rref;109.355;Reference radius in mm
+
+    ### Generation of database
+    GenerateDatabase;False;True to generate database
+    ExternalChannels;[1,2];List of external channels to load
+    AxisScaleFactor;[1.0, -1.33, -1.0];Axis scale factor (X,Y,Z)
+
+    ### Phase analysis setup
+    PhaseAnalysis;True;True to run phase analysis
+    RadiusRange;[0,220];Radius range for analysis (in mm)
+    PlaneRange;[-1];Plane range for analysis (-1 for all planes)
+    nStd;4;Number o:w
+    f std to remove spurious data
+    Period;360.0;Modulo
+    Step;2.0;Step between slots
+    Wleft;1.0;Slot width to the left
+    Wright;1.0;Slot width to the right
+    Overwrite;False;Overwrite existing VField files, otherwise skip
+
+    ### Plot generation setup
+    GeneratePolarPlots;True;True to generate polar plots
+    RotationSign;+1;Rotation sign (-1,+1)
+    RefractiveIndexCorrection;0.98;Refractive index correction (1.0 for no correction)
+    PolarPlotRadiusLimits;[0.2, 1.25];Radius limits for polar plots
+    VerticalUpPhaseOffset;0.0;Phase offset for vertical up axis
+    VerticalDownPhaseOffset;0.0;Phase offset for vertical down axis
+    HorizontalLeftPhaseOffset;0.0;Phase offset for horizontal left axis
+    HorizontalRightPhaseOffset;0.0;Phase offset for horizontal right axis
+    Autoscale;True;Set autoscale for polar plots
+    Va_samp_range;[0.0, 200.0];Polar plot range (Va samples)
+    Va_mean_range;[3, 4.0];Polar plot range (Va mean)
+    Va_sdev_range;[0.0, 0.5];Polar plot range (Va rms)
+    Vr_samp_range;[0.0, 500.0];Polar plot range (Vr samples)
+    Vr_mean_range;[-0.2, 0.2];Polar plot range (Vr mean)
+    Vr_sdev_range;[0.0, 0.5];Polar plot range (Vr rms)
+    Vt_samp_range;[0.0, 1000.0];Polar plot range (Vt samples)
+    Vt_mean_range;[-1.5, 1.5];Polar plot range (Vt mean)
+    Vt_sdev_range;[0.0, 0.5];Polar plot range (Vt rms)
+    Interpolation;thin_plate_spline;linear/thin_plate_spline/cubic/quintic/gaussian
+
+    ### Execution output setup
+    Verbose;True;Verbose output
+    ShowPhasePlots;False;Show phase plots
+    ShowPolarPlots;True;Show polar plots
