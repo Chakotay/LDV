@@ -18,6 +18,7 @@ To use this code, follow the instructions below:
 - NumPy
 - SciPy
 - Matplotlib
+- vtk
 
 ## License
 This project is licensed under the MIT License.
