@@ -1,33 +1,6 @@
 # %% [LDV data analysis]
-authorship="""LDV Data Analysis Script
-
-Author:
-- Francisco Alves Pereira (francisco.alvespereira@cnr.it)
-
-Version: 0.9.2
-Date: 2025-02-22
-
-Description:
-This script performs data analysis on Laser Doppler Velocimetry (LDV) measurements.
-It includes functions for loading, processing, and visualizing LDV data,
-as well as generating statistical summaries and exporting results to various formats.
-
-Dependencies:
-- Python 3.8+
-- numpy
-- pandas
-- matplotlib
-- scipy
-- scikit-learn
-- vtk
-- tqdm
-- openpyxl
-
-License:
-This script is released under the FAP License.
-
-Usage:
-python LDV.py <settings_filename>
+"""
+LDV Data Analysis Script
 """
 
 # %% [imports]
@@ -69,25 +42,59 @@ from icecream import ic
 from textwrap import dedent
 
 # %% [Graphical setup]
-#%matplotlib qt
-#%matplotlib --list
-#%matplotlib inline
+# %matplotlib qt
+# %matplotlib --list
+# %matplotlib inline
 plt.isinteractive()
-#mpl.use('gtk4agg')
-#mpl.use('kitcat')
-#plt.rc('font', family='sans-serif')
-#plt.rc('text', usetex=True)
-#plt.rcParams['text.latex.preamble'] = [
+# mpl.use('gtk4agg')
+# mpl.use('kitcat')
+# plt.rc('font', family='sans-serif')
+# plt.rc('text', usetex=True)
+# plt.rcParams['text.latex.preamble'] = [
 #       r'\usepackage{siunitx}',   # i need upright \micro symbols, but you need...
 #       r'\sisetup{detect-all}',   # ...this to force siunitx to actually use your fonts
 #       r'\usepackage{helvet}',    # set the normal font here
 #       r'\usepackage{sansmath}',  # load up the sansmath so that math -> helvet
 #       r'\sansmath'               # <- tricky! -- gotta actually tell tex to use!
-#] 
+# ] 
 
-pd.set_option('display.float_format','{:.6e}'.format)
+pd.set_option('display.float_format', '{:.6e}'.format)
 pd.set_option('expand_frame_repr', False)
 pd.set_option('colheader_justify', 'right')
+
+
+def authorship():
+    return dedent("""LDV Data Analysis Script
+
+    Author:
+    - Francisco Alves Pereira (francisco.alvespereira@cnr.it)
+
+    Version: 0.9.2
+    Date: 2025-02-22
+
+    Description:
+    This script performs data analysis on Laser Doppler Velocimetry (LDV) measurements.
+    It includes functions for loading, processing, and visualizing LDV data,
+    as well as generating statistical summaries and exporting results to various formats.
+
+    Dependencies:
+    - Python 3.8+
+    - numpy
+    - pandas
+    - matplotlib
+    - scipy
+    - scikit-learn
+    - vtk
+    - tqdm
+    - openpyxl
+
+    License:
+    This script is released under the FAP License.
+
+    Usage:
+    python LDV.py <settings_filename>
+    """)
+
 
 def Display(data):
     """
@@ -101,20 +108,17 @@ def Display(data):
     None
     """
     pd.set_option('display.width', 1000)
-    if len(data)<100:
-        pd.set_option("display.max_rows",len(data))
-    pd.set_option('display.max_columns',len(data.columns))
+    if len(data) < 100:
+        pd.set_option("display.max_rows", len(data))
+    pd.set_option('display.max_columns', len(data.columns))
     display(data)
     pd.reset_option("display.max_rows")
     pd.reset_option("display.max_columns")
 
-plt.isinteractive()
 
-def exit(code=0):
-    sys.exit(code)
 
 # %%
-def myround(x,margin,base=5):
+def myround(x, margin, base=5):
     """
     Rounds a number to the nearest multiple of a specified base, adjusted by a margin.
 
@@ -126,16 +130,14 @@ def myround(x,margin,base=5):
     Returns:
     float: The rounded number.
     """
-        
-    x=x*10+np.sign(margin)*base
+
+    x = x*10+np.sign(margin)*base
     return base*round(x/base)/10
 
 
-# %% [markdown]
-# # Settings
+# %% [Settings]
 
-# %%
-def Check(outfolder,verbose=False):
+def Check(outfolder, verbose=False):
     """
     Checks the existence and contents of a specified folder.
     If the folder does not exist, it creates the folder and returns True.
@@ -148,13 +150,13 @@ def Check(outfolder,verbose=False):
     """
 
     if not outfolder.exists():
-        outfolder.mkdir(parents=True,exist_ok=True)
-        return(True)
+        outfolder.mkdir(parents=True, exist_ok=True)
+        return (True)
     else:
-        items=[item for item in outfolder.iterdir() if item.is_file() and item.name.endswith('fth')]
+        items = [item for item in outfolder.iterdir() if item.is_file() and item.name.endswith('fth')]
         if verbose:
             display(items)
-        return(False)
+        return (False)
 
 # %%
 def SetupLDV(f):
@@ -172,14 +174,14 @@ def SetupLDV(f):
     OutputPath;'Analysis/CRP1_LDV';Output path
     Case;'unified-data';Case
     Rref;109.355;Reference radius in mm
-    
+
     ### Generation of database
     GenerateDatabase;False;True to generate database
     ExternalChannels;[1,2];List of external channels to load
     AxisScaleFactor;[1.0, -1.33, -1.0];Axis scale factor (X,Y,Z)
     ExportCsv;True;Export to .csv files
     ExportMat;False;Export to .mat files
-    
+
     ### Phase analysis setup
     PhaseAnalysis;True;True to run phase analysis
     RadiusRange;[0,220];Radius range for analysis (in mm)
@@ -190,7 +192,7 @@ def SetupLDV(f):
     Wleft;1.0;Slot width to the left
     Wright;1.0;Slot width to the right
     Overwrite;False;Overwrite existing VField files, otherwise skip
-    
+
     ### Plot generation setup
     GeneratePolarPlots;True;True to generate polar plots
     RotationSign;-1;Rotation sign (-1,+1)
@@ -210,8 +212,8 @@ def SetupLDV(f):
     Vt_samp_range;[0.0, 1000.0];Polar plot range (Vt samples)
     Vt_mean_range;[-1.5, 1.5];Polar plot range (Vt mean)
     Vt_sdev_range;[0.0, 0.5];Polar plot range (Vt rms)
-    Interpolation;thin_plate_spline;linear/thin_plate_spline/cubic/quintic/gaussian
-    
+    Interpolation;thin_plate_spline;linear/thin_plate_spline/cubic/quintic/gaussian/none
+
     ### Execution output setup
     Verbose;False;Verbose output
     ShowPhasePlots;False;Show phase plots
@@ -463,7 +465,7 @@ def ReadStatFiles(datafolder, case, verbose=False):
     Block=[item for item in datafolder.iterdir() if item.is_dir()]
     if not len(Block):
         print('No blocks found')
-        exit()
+        sys.exit(0)
     Block=sorted(Block, key=lambda x: x.name)
     if verbose:
         display(Block)
@@ -525,7 +527,7 @@ def LoadStatFiles(verbose=False):
     Block = Data['Block'].drop_duplicates().to_list()
     if not len(Block):
         print('No blocks found')
-        exit()
+        sys.exit(0)
     Data=Data.reset_index()
     
     # Change axis orientation and scaling
@@ -656,7 +658,7 @@ def FindPlanes(verbose=False):
     if verbose:
         plt.show()
 
-    print(Data.loc[Data['Plane'].isnull()])
+    #print(Data.loc[Data['Plane'].isnull()])
     Data['Plane']=Data['Plane'].astype(int)
     Data.sort_values(by=['Plane','Z (mm)','Y (mm)'],inplace=True,ascending=(True,False,False),ignore_index=True)
     if verbose:
@@ -1213,18 +1215,21 @@ def ExtractVelocityField(Data, verbose=False):
                         Data=DataStats(Data,repeat,Lbls_Stats[i],V[i]['Velocity Ch. %d (m/sec)' % (i+1)])
 
             if verbose:
-                display(V[0].info(), V[1].info())
+                print(Row['File'])
+                print('V1')
+                display(V[0].info())
+                print('V2')
+                display(V[1].info())
             for i in range(2):
                 V[i]=V[i].reset_index(drop=True)
 
-
-            V = pd.concat([V[0],V[1]], axis=1).reindex(V[0].index)
+            V = pd.concat([V[0],V[1]], axis=1)
             V = V.dropna(how='all')
            
             SaveFTH(outFolder,Row['File'],V,verbose=False)
-            if settings['ExportFormat']=='mat':
+            if settings['ExportMat']:
                 SaveMAT(outFolder,Row['File'],V,verbose=False)
-            if settings['ExportFormat']=='csv':
+            if settings['ExportCsv']:
                 SaveCSV(outFolder,Row['File'],V,verbose=False)
 
             pbar.desc=Row['File']
@@ -1771,30 +1776,30 @@ def ExportToVTKVtu(block, plane, orientation, X):
     for k,lbl in enumerate(Lbl):
 
         V=[Vn[k,:,:],Vm[k,:,:],Vs[k,:,:]]
-    
-        fact=1
-        if orientation in ['Left','Right']:
-            fact=settings['RefractiveIndexCorrection']
-            kernel=settings['Interpolation']
-            #ic(kernel)
+   
+        print('Interpolation:',settings['Interpolation'])
+        if settings['Interpolation']!='none' and orientation in ['Left', 'Right']:
+            fact = settings['RefractiveIndexCorrection']
+            kernel = settings['Interpolation']
+            # ic(kernel)
 
-            pts=np.vstack([rad.flatten()*fact,theta.flatten()]).T
+            pts = np.vstack([rad.flatten()*fact,theta.flatten()]).T
             Rmin = pts[:,0].min()
             Rmax = pts[:,0].max()
             for i in range(3):
 
-                v=V[i].flatten()
+                v = V[i].flatten()
                 cond = ~np.isnan(v)
-                Pts=pts[cond]
-                v=v[cond]
+                Pts = pts[cond]
+                v = v[cond]
                 interp = RBFInterpolator(Pts,v,
                                      smoothing=0.1,\
                                      kernel=kernel)
-                Pts=np.vstack([rad.flatten(),theta.flatten()]).T
+                Pts = np.vstack([rad.flatten(),theta.flatten()]).T
 
                 V[i] = interp(Pts)
 
-                cond= (Pts[:,0]<Rmin) | (Pts[:,0]>Rmax)
+                cond = (Pts[:,0]<Rmin) | (Pts[:,0]>Rmax)
                 V[i][cond] = np.nan
 
         for i in range(3):
@@ -2016,7 +2021,7 @@ def PolarPlots(verbose=False, show=False):
     DataPath=Path(settings['OutFolder'],'%s_Stats4.fth' % settings['Case'])
     if not DataPath.exists():
         print('%s does not exist' % DataPath)
-        exit()
+        sys.exit(0)
 
     Data=pd.read_feather(DataPath)
     #display(Data)
@@ -2100,10 +2105,8 @@ def PolarPlots(verbose=False, show=False):
             pbar.desc="P%02d" % plane
             pbar.update()
 
-# %% [markdown] editable=true slideshow={"slide_type": ""}
-# # Phase analysis
 
-# %%
+# %% [Phase analysis]
 def PhaseAnalysis(verbose=False, show=False):
     """
     Perform phase analysis on measurement data.
@@ -2119,12 +2122,12 @@ def PhaseAnalysis(verbose=False, show=False):
     of the single point analysis are shown.
     """
 
-    DataPath=Path(settings['OutFolder'],'%s_Stats4.fth' % settings['Case'])
+    DataPath = Path(settings['OutFolder'],'%s_Stats4.fth' % settings['Case'])
     if not DataPath.exists():
         print('%s does not exist' % DataPath)
-        exit()
+        sys.exit(0)
     Data=pd.read_feather(DataPath)
- 
+
     Planes = settings['PlaneRange']
     if Planes == [-1]:
         seen = set()
@@ -2148,27 +2151,25 @@ def PhaseAnalysis(verbose=False, show=False):
 
     if verbose:
         display(Data)
-        display(data) 
+        display(data)
 
-    with tqdm(total=len(data),dynamic_ncols=True,desc="%s P%02d" % \
+    with tqdm(total = len(data),dynamic_ncols=True,desc="%s P%02d" % \
         (data.loc[data.index[0],'File'],data.loc[data.index[0],'Plane'])) as pbar:
         for _, row in data.iterrows():
             file = row['File']
             plane = row['Plane']
-            
+
             start_time = timeit.default_timer()
-           
-            SinglePointAnalysis(row,show) 
+
+            SinglePointAnalysis(row, show) 
 
             elapsed = timeit.default_timer() - start_time
 
-            pbar.desc="%s P%02d [%.1fs]" % (file, plane, elapsed)
+            pbar.desc = "%s P%02d [%.1fs]" % (file, plane, elapsed)
             pbar.update()
 
-# %% [markdown]
-# # Main
 
-# %% tags=["Main"]
+# %% [Main]
 def GenerateDatabase(verbose=False):
     LoadStatFiles(verbose)
     FindPlanes(verbose)
@@ -2176,23 +2177,27 @@ def GenerateDatabase(verbose=False):
     FindMatches(verbose)
     ComputeStats(verbose)
 
-# %% tags=["Main"]
 import sys
 args = [arg for arg in sys.argv[1:] if not arg.startswith('-')]
-# print("Args:",args)
+ print("Args:",args)
 if len(args) != 1:
-    print(authorship)
-    sys.exit(0)
+    if Path('SettingsLDV.csv').exists():
+        settings_filename = 'SettingsLDV.csv'
+        print('Using default settings file')
+    else:
+      authorship()
+      sys.exit(0)
+else:
+    settings_filename = args[0]
 
-settings_filename = args[0]
 global settings
 settings = RunSettings(settings_filename)
-#display(settings) jn
+# display(settings) jn
 
 if settings['GenerateDatabase']:
     print('Generating database')
     GenerateDatabase(settings['Verbose'])
-    
+
 if settings['PhaseAnalysis']:
     print('Running phase analysis')
     PhaseAnalysis(settings['Verbose'], settings['ShowPhasePlots'])
@@ -2200,7 +2205,7 @@ if settings['PhaseAnalysis']:
 if settings['GeneratePolarPlots']:
     print('Generating polar plots')
     PolarPlots(settings['Verbose'], settings['ShowPolarPlots'])
-    
+
 plt.close('all')
 print('Finished')
 

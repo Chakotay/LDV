@@ -10,9 +10,11 @@
     Rref;109.355;Reference radius in mm
 
     ### Generation of database
-    GenerateDatabase;False;True to generate database
+    GenerateDatabase;True;True to generate database
     ExternalChannels;[1,2];List of external channels to load
     AxisScaleFactor;[1.0, -1.33, -1.0];Axis scale factor (X,Y,Z)
+    ExportCsv;True;Export to .csv files
+    ExportMat;True;Export to .mat files
 
     ### Phase analysis setup
     PhaseAnalysis;True;True to run phase analysis
@@ -45,9 +47,9 @@
     Vt_samp_range;[0.0, 1000.0];Polar plot range (Vt samples)
     Vt_mean_range;[-1.5, 1.5];Polar plot range (Vt mean)
     Vt_sdev_range;[0.0, 0.5];Polar plot range (Vt rms)
-    Interpolation;thin_plate_spline;linear/thin_plate_spline/cubic/quintic/gaussian
+    Interpolation;none;linear/thin_plate_spline/cubic/quintic/gaussian/none
 
     ### Execution output setup
-    Verbose;True;Verbose output
+    Verbose;False;Verbose output
     ShowPhasePlots;False;Show phase plots
-    ShowPolarPlots;True;Show polar plots
+    ShowPolarPlots;False;Show polar plots
