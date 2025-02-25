@@ -10,18 +10,17 @@
     Rref;109.355;Reference radius in mm
 
     ### Generation of database
-    GenerateDatabase;True;True to generate database
+    GenerateDatabase;False;True to generate database
     ExternalChannels;[1,2];List of external channels to load
     AxisScaleFactor;[1.0, -1.33, -1.0];Axis scale factor (X,Y,Z)
-    ExportCsv;True;Export to .csv files
-    ExportMat;True;Export to .mat files
+    ExportCsv;False;Export to .csv files
+    ExportMat;False;Export to .mat files
 
     ### Phase analysis setup
     PhaseAnalysis;True;True to run phase analysis
     RadiusRange;[0,220];Radius range for analysis (in mm)
     PlaneRange;[-1];Plane range for analysis (-1 for all planes)
-    nStd;4;Number o:w
-    f std to remove spurious data
+    nStd;4;Number of std to remove spurious data
     Period;360.0;Modulo
     Step;2.0;Step between slots
     Wleft;1.0;Slot width to the left
@@ -30,7 +29,7 @@
 
     ### Plot generation setup
     GeneratePolarPlots;True;True to generate polar plots
-    RotationSign;+1;Rotation sign (-1,+1)
+    RotationSign;-1;Rotation sign (-1,+1)
     RefractiveIndexCorrection;0.98;Refractive index correction (1.0 for no correction)
     PolarPlotRadiusLimits;[0.2, 1.25];Radius limits for polar plots
     VerticalUpPhaseOffset;0.0;Phase offset for vertical up axis

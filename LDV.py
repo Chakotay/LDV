@@ -4,6 +4,7 @@ LDV Data Analysis Script
 """
 
 # %% [imports]
+import sys
 from pathlib import Path
 
 import matplotlib as mpl
@@ -23,8 +24,8 @@ from scipy.spatial import Delaunay
 
 import scipy.cluster.hierarchy as shc
 from sklearn.cluster import AgglomerativeClustering
-from vtk import VTK_TRIANGLE,vtkDoubleArray,vtkPoints
-from vtk import vtkUnstructuredGrid,vtkXMLUnstructuredGridWriter
+from vtk import VTK_TRIANGLE, vtkDoubleArray, vtkPoints
+from vtk import vtkUnstructuredGrid, vtkXMLUnstructuredGridWriter
 import vtkmodules.util.data_model
 import vtkmodules.util.execution_model
 
@@ -56,7 +57,7 @@ plt.isinteractive()
 #       r'\usepackage{helvet}',    # set the normal font here
 #       r'\usepackage{sansmath}',  # load up the sansmath so that math -> helvet
 #       r'\sansmath'               # <- tricky! -- gotta actually tell tex to use!
-# ] 
+# ]
 
 pd.set_option('display.float_format', '{:.6e}'.format)
 pd.set_option('expand_frame_repr', False)
@@ -70,7 +71,7 @@ def authorship():
     - Francisco Alves Pereira (francisco.alvespereira@cnr.it)
 
     Version: 0.9.2
-    Date: 2025-02-22
+    Date: 2025-02-25
 
     Description:
     This script performs data analysis on Laser Doppler Velocimetry (LDV) measurements.
@@ -114,7 +115,6 @@ def Display(data):
     display(data)
     pd.reset_option("display.max_rows")
     pd.reset_option("display.max_columns")
-
 
 
 # %%
@@ -223,6 +223,7 @@ def SetupLDV(f):
     with open(f, 'w') as file:
         file.write(dedent(content))
 
+
 # %%
 def GetSettings(f):
     """
@@ -245,7 +246,7 @@ def GetSettings(f):
         # Load the settings
         print(f'Loading {f}')
 
-    Settings = pd.read_csv(f,delimiter=';', 
+    Settings = pd.read_csv(f, delimiter=';',
                            comment='#',
                            index_col=0,
                            na_filter=False,
@@ -255,19 +256,20 @@ def GetSettings(f):
 
     Settings = Settings[~Settings.index.str.startswith('#')]
     Settings = Settings[~Settings.index.duplicated(keep='last')]
-    
-    #def split_name(name):
+
+    # def split_name(name):
     #    return pd.Series(name.split("#", 1))
-    #Settings[['Value', 'Comment']] = Settings['Value'].apply(split_name)
-    
+    # Settings[['Value', 'Comment']] = Settings['Value'].apply(split_name)
+
     Settings = Settings.replace(np.nan, '-', regex=True)
     Settings.index = [x.lstrip().rstrip() for x in Settings.index]
-    for col in ['Value','Comment']:
+    for col in ['Value', 'Comment']:
         Settings[col] = Settings[col].apply(lambda x: str(x).lstrip().rstrip().strip("'"))
-    
-    return(Settings)
 
-# %%
+    return (Settings)
+
+
+# %% [Settings functions]
 def RunSettings(filename):
     """
     Configures and initializes settings for LDV analysis from a CSV file.
@@ -287,67 +289,68 @@ def RunSettings(filename):
         - The function also calculates additional settings like 'Wslot' and 'IntervalClosed'.
         - If 'verbose' is True, the settings and their types are displayed for debugging purposes.
     """
-    
-    Settings=GetSettings(Path(filename))
-    #display(Settings['Value'].apply(type))
+
+    Settings = GetSettings(Path(filename))
+    # display(Settings['Value'].apply(type))
 
     Values = ['Root', 'PropModel', 'Case', 'Interpolation']
 
-    Values = ['Rref', 'Period', 'Step', 'Wleft', 'Wright', 
-              'VerticalUpPhaseOffset', 'VerticalDownPhaseOffset', 
+    Values = ['Rref', 'Period', 'Step', 'Wleft', 'Wright',
+              'VerticalUpPhaseOffset', 'VerticalDownPhaseOffset',
               'HorizontalLeftPhaseOffset', 'HorizontalRightPhaseOffset',
               'RefractiveIndexCorrection']
     for value in Values:
-        Settings.at[value,'Value'] = float(Settings.at[value,'Value'])
+        Settings.at[value, 'Value'] = float(Settings.at[value, 'Value'])
 
     Values = ['RotationSign', 'nStd']
     for value in Values:
-        Settings.at[value,'Value'] = int(Settings.at[value,'Value'])
+        Settings.at[value, 'Value'] = int(Settings.at[value, 'Value'])
 
-    Values = ['ExportCsv', 'ExportMat', 
+    Values = ['ExportCsv', 'ExportMat',
               'GenerateDatabase', 'PhaseAnalysis',
-              'GeneratePolarPlots', 'Autoscale', 
+              'GeneratePolarPlots', 'Autoscale',
               'Verbose', 'Overwrite',
               'ShowPhasePlots', 'ShowPolarPlots']
     for value in Values:
-        Settings.at[value,'Value'] = True if Settings.at[value,'Value']=='True' else False
+        Settings.at[value, 'Value'] = True if Settings.at[value, 'Value'] == 'True' else False
 
     Values = ['AxisScaleFactor',
-              'RadiusRange','PolarPlotRadiusLimits',
+              'RadiusRange', 'PolarPlotRadiusLimits',
               'Va_samp_range', 'Va_mean_range', 'Va_sdev_range', 
               'Vr_samp_range', 'Vr_mean_range', 'Vr_sdev_range',
               'Vt_samp_range', 'Vt_mean_range', 'Vt_sdev_range']
     for value in Values:
-        lst = Settings.at[value,'Value']
+        lst = Settings.at[value, 'Value']
         lst = list(lst.strip('[]').split(','))
-        if lst==['']:
+        if lst == ['']:
             raise ValueError(f"The list for {value} is empty.")
-        Settings.at[value,'Value']= [float(a) for a in lst]
+        Settings.at[value, 'Value'] = [float(a) for a in lst]
 
-    Values = ['ExternalChannels','PlaneRange']
+    Values = ['ExternalChannels', 'PlaneRange']
     for value in Values:
-        lst = Settings.at[value,'Value']
+        lst = Settings.at[value, 'Value']
         lst = list(lst.strip('[]').split(','))
-        if lst==['']:
-            lst=['-1']
-        Settings.at[value,'Value']= [int(a) for a in lst]
+        if lst == ['']:
+            lst = ['-1']
+        Settings.at[value, 'Value'] = [int(a) for a in lst]
 
     settings = Settings['Value'].to_dict()
     settings['Wslot'] = settings['Wleft']+settings['Wright']
     settings['IntervalClosed'] = 'left'
 
-    settings['DataFolder'] = Path(settings['RootPath'],settings['DataPath'],settings['Case'])
-    settings['OutFolder'] = Path(settings['RootPath'],settings['OutputPath'],settings['Case'])
+    settings['DataFolder'] = Path(settings['RootPath'], settings['DataPath'], settings['Case'])
+    settings['OutFolder'] = Path(settings['RootPath'], settings['OutputPath'], settings['Case'])
 
     if settings['Verbose']:
         display(Settings)
 
-    return(settings)
+    return (settings)
 
 # print(RunSettings('test.csv'))
 
+
 # %% [I/O functions]
-def SaveCSV(folder,file,data,verbose=False):
+def SaveCSV(folder, file, data, verbose=False):
     """
     Save a DataFrame to a CSV file in the specified folder.
 
@@ -361,13 +364,14 @@ def SaveCSV(folder,file,data,verbose=False):
     None
     """
 
-    folder.mkdir(parents=True,exist_ok=True)
-    dataout=Path(folder,file+'.csv')
+    folder.mkdir(parents=True, exist_ok=True)
+    dataout = Path(folder, file+'.csv')
     if verbose:
         display(dataout)
     data.to_csv(dataout)
 
-def SaveXLS(folder,file,data,verbose=False):
+
+def SaveXLS(folder, file, data, verbose=False):
     """
     Save the given data to an Excel file in the specified folder.
 
@@ -381,15 +385,16 @@ def SaveXLS(folder,file,data,verbose=False):
     None
     """
 
-    folder.mkdir(parents=True,exist_ok=True)
-    dataout=Path(folder,file+'.xlsx')
+    folder.mkdir(parents=True, exist_ok=True)
+    dataout = Path(folder, file+'.xlsx')
     if verbose:
         display(dataout)
     writer = pd.ExcelWriter(dataout, engine='openpyxl')
     data.to_excel(writer, sheet_name=('Stats'))
     writer.close()
 
-def SaveFTH(folder,file,data,verbose=False):
+
+def SaveFTH(folder, file, data, verbose=False):
     """
     Save a DataFrame to a Feather file with LZ4 compression.
 
@@ -403,13 +408,14 @@ def SaveFTH(folder,file,data,verbose=False):
     None
     """
 
-    folder.mkdir(parents=True,exist_ok=True)
-    dataout=Path(folder,file+'.fth')
+    folder.mkdir(parents=True, exist_ok=True)
+    dataout = Path(folder, file+'.fth')
     if verbose:
         display(dataout)
-    data.to_feather(dataout,compression='lz4')
+    data.to_feather(dataout, compression='lz4')
 
-def SaveMAT(folder,file,data,verbose=False):
+
+def SaveMAT(folder, file, data, verbose=False):
     """
     Save data to a .mat file in the specified folder.
 
@@ -423,26 +429,25 @@ def SaveMAT(folder,file,data,verbose=False):
     None
     """
 
-    folder.mkdir(parents=True,exist_ok=True)
-    dataout=Path(folder,file+'.mat')
+    folder.mkdir(parents=True, exist_ok=True)
+    dataout = Path(folder, file+'.mat')
     if verbose:
         display(dataout)
     mydict = data.to_dict('list')
-    io.savemat(str(dataout), {'structs':mydict})
+    io.savemat(str(dataout), {'structs': mydict})
+
 
 def LoadFTH(folder, file):
-   
+
     v = pd.DataFrame()
-    f=Path(folder, file+'.fth')
+    f = Path(folder, file+'.fth')
     if f.exists():
-        v=pd.read_feather(f)
+        v = pd.read_feather(f)
 
     return (v)
 
-# %% [markdown]
-# # Read export files
 
-# %%
+# %% [Read FlowSizer export files]
 def ReadStatFiles(datafolder, case, verbose=False):
     """
     Reads statistical files from a specified data folder and case, and returns a concatenated DataFrame.
@@ -1225,7 +1230,7 @@ def ExtractVelocityField(Data, verbose=False):
 
             V = pd.concat([V[0],V[1]], axis=1)
             V = V.dropna(how='all')
-           
+          
             SaveFTH(outFolder,Row['File'],V,verbose=False)
             if settings['ExportMat']:
                 SaveMAT(outFolder,Row['File'],V,verbose=False)
@@ -1760,24 +1765,20 @@ def ExportToVTKVtu(block, plane, orientation, X):
     z = np.full((x.shape[0],x.shape[1]),Z)
     points=np.vstack([x.flatten(),y.flatten()]).T
     points=np.vstack((points,(0,0)))
+
     tri = Delaunay(points)
+    vtk_dataset = MakeVtkDataset(tri,Z)
     
     orientation = ('Up' if orientation == 'Vu' else 'Down' if orientation == 'Vd' else 'Left' if orientation == 'Hl' else 'Right')
     Lbl=['Radial velocity (%s)' % orientation, 'Axial velocity (%s)' % orientation]
     if orientation in ['Left','Right']:
         Lbl=['Tangential velocity (%s)' % orientation, 'Axial velocity (%s)' % orientation]
-        
-    points=np.vstack([x.flatten(),y.flatten()]).T
-    points=np.vstack((points,(0,0)))
-    tri = Delaunay(points)
-    
-    vtk_dataset = MakeVtkDataset(tri,Z)
     
     for k,lbl in enumerate(Lbl):
 
         V=[Vn[k,:,:],Vm[k,:,:],Vs[k,:,:]]
    
-        print('Interpolation:',settings['Interpolation'])
+        # print('Interpolation:',settings['Interpolation'])
         if settings['Interpolation']!='none' and orientation in ['Left', 'Right']:
             fact = settings['RefractiveIndexCorrection']
             kernel = settings['Interpolation']
@@ -1815,10 +1816,8 @@ def ExportToVTKVtu(block, plane, orientation, X):
     writer.SetInputData(vtk_dataset)
     writer.Write()
 
-# %% [markdown]
-# # Polar plots and VTK output
 
-# %%
+# %% [Polar plots and VTK output]
 def BuildBlocks(radii, ctrs, orientation, vstats, verbose=False):
     """
     BuildBlocks constructs and returns a set of data blocks for given radii, centers, and statistics.
@@ -2017,92 +2016,95 @@ def PolarPlots(verbose=False, show=False):
     - PlotVStatsPolar: To plot the polar statistics.
     - ExportToVTKVtu: To export data to VTK format.
     """
-    
-    DataPath=Path(settings['OutFolder'],'%s_Stats4.fth' % settings['Case'])
+
+    DataPath = Path(settings['OutFolder'], '%s_Stats4.fth' % settings['Case'])
     if not DataPath.exists():
         print('%s does not exist' % DataPath)
         sys.exit(0)
 
-    Data=pd.read_feather(DataPath)
-    #display(Data)
+    Data = pd.read_feather(DataPath)
+    # display(Data)
 
-    sw = 'S%04dW%04d' % (settings['Step']*100,settings['Wslot']*100)
-    datafolder=Path(settings['OutFolder'],'PolarStats',sw,'Csv')
-    Statfile=[item for item in datafolder.iterdir()]
-    #print(Statfile)
+    sw = 'S%04dW%04d' % (settings['Step']*100, settings['Wslot']*100)
+    datafolder = Path(settings['OutFolder'], 'PolarStats', sw, 'Csv')
+    Statfile = [item for item in datafolder.iterdir()]
+    # print(Statfile)
 
     Planes = settings['PlaneRange']
-    if Planes==[-1]:
+    if Planes == [-1]:
         seen = set()
         Planes = []
         for x in Data['Plane']:
             if x not in seen:
                 Planes.append(x)
                 seen.add(x)
-    
+
         Planes.sort()
 
     print("%d planes:" % len(Planes), Planes)
-    
-    with tqdm(total=len(Planes),dynamic_ncols=True,desc="Plane P%02d" % Planes[0]) as pbar:
+
+    with tqdm(total=len(Planes), dynamic_ncols=True, desc="Plane P%02d" % Planes[0]) as pbar:
         for plane in Planes:
-            cond0=Data['Plane']==plane
+            cond0 = (Data['Plane'] == plane)
 
             start_time = timeit.default_timer()
-            for orientation in ['Vu','Vd','Hl','Hr']:
-                cond1=Data['Orientation']==orientation
-                data=Data[cond0 & cond1]
+            for orientation in ['Vu', 'Vd', 'Hl', 'Hr']:
+                cond1 = (Data['Orientation'] == orientation)
+                data = Data[cond0 & cond1]
 
-                if len(data)==0:
+                if len(data) == 0:
                     continue
-                
-                count=0
-                for _,row in data.iterrows():
-                    statfile=Path(datafolder, '%s_Stats_%s_P%06d' \
-                        % (settings['Case'],sw,row['Point'])).with_suffix('.csv')
+
+                count = 0
+                for _, row in data.iterrows():
+                    statfile = Path(datafolder, '%s_Stats_%s_P%06d' \
+                        % (settings['Case'], sw, row['Point'])).with_suffix('.csv')
 
                     if statfile in Statfile:
-                        count+=1
+                        count += 1
                     else:
                         if verbose:
                             print('Missing %s' % statfile)
-                if count<len(data):
+                if count < len(data):
                     print('Incomplete data for plane %d (%s): %d/%d points missing' % (plane,orientation,len(data)-count,len(data)))
                     continue
                 if verbose:
-                    print('Data:',len(data), 'Count:',count)
+                    print('Data:', len(data), 'Count:',count)
 
                 R = data['R (mm)']/settings['Rref']
                 R = np.sort(R)
-                X = np.mean(data.loc[data['Plane']==plane,'X (mm)'])
+                X = np.mean(data.loc[data['Plane'] == plane,'X (mm)'])
 
-                #print('R:',len(R),data['Orientation'],data['Point'],len(data))
-                _,Ctrs=SetIntervals(settings['Period'],settings['Step'],
-                                            settings['Wleft'],settings['Wright'])
+                if np.mean(R) < 1e-6:
+                    print('Skipping plane %d (%s): R = %f' % (plane, orientation, np.mean(R)))
+                    continue
+                #print('R:', len(R), data['Orientation'], data['Point'], len(data))
+                _, Ctrs = SetIntervals(settings['Period'], settings['Step'],
+                                     settings['Wleft'], settings['Wright'])
 
-                vstats=pd.DataFrame()
-                for _,row in data.iterrows():
+                vstats = pd.DataFrame()
+                for _, row in data.iterrows():
                     plane = row['Plane']
 
-                    statfile=Path(datafolder, '%s_Stats_%s_P%06d' \
-                        % (settings['Case'],sw,row['Point'])).with_suffix('.csv')
-                    vstat=pd.read_csv(statfile)
-                    if len(vstats)==0:
-                        vstats=vstat
+                    statfile = Path(datafolder, '%s_Stats_%s_P%06d' \
+                        % (settings['Case'], sw, row['Point'])).with_suffix('.csv')
+                    vstat = pd.read_csv(statfile)
+                    if len(vstats) == 0:
+                        vstats = vstat
                     else:   
-                        vstats=pd.concat([vstats,vstat],ignore_index=True)
+                        vstats = pd.concat([vstats, vstat], ignore_index=True)
 
-                    #if verbose:
-                    #    display(vstats)
-                #print(vstats.shape)
-                Block = BuildBlocks(R,Ctrs,orientation,vstats,verbose=False)
-                PlotVStatsPolar(Block,plane,orientation,X,show)
-                ExportToVTKVtu(Block,plane,orientation,X)
+                    if verbose:
+                       display(vstats)
+
+                Block = BuildBlocks(R,Ctrs, orientation, vstats, verbose=False)
+                PlotVStatsPolar(Block, plane, orientation, X, show)
+                ExportToVTKVtu(Block, plane, orientation, X)
 
             if verbose:
                 print('Plane %02d: %f seconds' % (plane, timeit.default_timer() - start_time))
 
-            pbar.desc="P%02d" % plane
+            pbar.desc = "P%02d" % plane
             pbar.update()
 
 
@@ -2126,7 +2128,7 @@ def PhaseAnalysis(verbose=False, show=False):
     if not DataPath.exists():
         print('%s does not exist' % DataPath)
         sys.exit(0)
-    Data=pd.read_feather(DataPath)
+    Data = pd.read_feather(DataPath)
 
     Planes = settings['PlaneRange']
     if Planes == [-1]:
@@ -2161,7 +2163,7 @@ def PhaseAnalysis(verbose=False, show=False):
 
             start_time = timeit.default_timer()
 
-            SinglePointAnalysis(row, show) 
+            SinglePointAnalysis(row, show)
 
             elapsed = timeit.default_timer() - start_time
 
@@ -2177,22 +2179,22 @@ def GenerateDatabase(verbose=False):
     FindMatches(verbose)
     ComputeStats(verbose)
 
-import sys
+
 args = [arg for arg in sys.argv[1:] if not arg.startswith('-')]
- print("Args:",args)
+# print("Args:", args)
 if len(args) != 1:
     if Path('SettingsLDV.csv').exists():
         settings_filename = 'SettingsLDV.csv'
         print('Using default settings file')
     else:
-      authorship()
-      sys.exit(0)
+        authorship()
+        sys.exit(0)
 else:
     settings_filename = args[0]
 
 global settings
 settings = RunSettings(settings_filename)
-# display(settings) jn
+# display(settings)
 
 if settings['GenerateDatabase']:
     print('Generating database')
