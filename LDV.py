@@ -662,7 +662,7 @@ def FindPlanes(verbose=False):
             Y = Data.loc[locations.index[index], 'Y (mm)']
             Z = Data.loc[locations.index[index], 'Z (mm)']
             ax.scatter(X, Y, Z,
-                       s=50, color=c, fc='none',
+                       s=50, ec=c, fc='none',
                        label=('Plane %02d' % p),
                        depthshade=None)
 
@@ -840,19 +840,19 @@ def FindMatches(verbose=False):
     x = locations.loc[condVu, 'X (mm)']
     y = locations.loc[condVu, 'Y (mm)']
     z = locations.loc[condVu, 'Z (mm)']
-    ax.scatter(x, y, z, s=10, fc='none', color='red', depthshade=None)
+    ax.scatter(x, y, z, s=10, fc='none', ec='red', depthshade=None)
     x = locations.loc[condVd, 'X (mm)']
     y = locations.loc[condVd, 'Y (mm)']
     z = locations.loc[condVd, 'Z (mm)']
-    ax.scatter(x, y, z, s=60, fc='none', color='green', depthshade=None)
+    ax.scatter(x, y, z, s=60, fc='none', ec='green', depthshade=None)
     x = locations.loc[condHl, 'X (mm)']
     y = locations.loc[condHl, 'Y (mm)']
     z = locations.loc[condHl, 'Z (mm)']
-    ax.scatter(x, y, z, s=120, fc='none', color='blue', depthshade=None)
+    ax.scatter(x, y, z, s=120, fc='none', ec='blue', depthshade=None)
     x = locations.loc[condHr, 'X (mm)']
     y = locations.loc[condHr, 'Y (mm)']
     z = locations.loc[condHr, 'Z (mm)']
-    # ax.scatter(x,y,z,s=180,fc='none',color='black',depthshade=None)
+    # ax.scatter(x,y,z,s=180,fc='none',ec='black',depthshade=None)
     ax.set_xlabel('X (mm)')
     ax.set_ylabel('Y (mm)')
     ax.set_zlabel('Z (mm)')
@@ -905,7 +905,7 @@ def FindMatches(verbose=False):
             Y = locations.loc[locations.index[index], 'Y (mm)']
             Z = locations.loc[locations.index[index], 'Z (mm)']
             # c = Cluster.loc[index, 'Label'].values.astype(int)
-            ax.scatter(X, Y, Z, s=30, color='red', fc='none',
+            ax.scatter(X, Y, Z, s=30, ec='red', fc='none',
                        depthshade=None)
         for ind in index:
             Data.loc[index, 'Radial matching'] = ovl
