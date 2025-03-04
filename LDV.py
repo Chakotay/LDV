@@ -2062,7 +2062,7 @@ def PolarPlots(verbose=False, show=False):
             start_time = timeit.default_timer()
             for orientation in ['Vu', 'Vd', 'Hl', 'Hr']:
                 cond1 = (Data['Orientation'] == orientation)
-                data = Data[cond0 & cond1]
+                data = Data[cond0 & cond1].copy()
 
                 if len(data) == 0:
                     continue
@@ -2085,15 +2085,21 @@ def PolarPlots(verbose=False, show=False):
 
                     statfile = Path(datafolder, '%s_Stats_%s_P%06d' % (settings['Case'], sw, row['Point']))
                     statfile = statfile.with_suffix('.csv')
-                    print(statfile)
+                    # print(statfile)
                     if statfile.exists():
                         vstat = pd.read_csv(statfile)
-                        vstats = pd.concat([vstats, vstat], ignore_index=True)
+                        if count == 0:
+                            vstats = vstat.copy()
+                        else:
+                            vstats = pd.concat([vstats, vstat], ignore_index=True)
 
                         count += 1
                     else:
                         print('Missing %s' % statfile)
-                        vstats = pd.concat([vstats, vstat0], ignore_index=True)
+                        if count == 0:
+                            vstats = vstat0.copy()
+                        else:
+                            vstats = pd.concat([vstats, vstat0], ignore_index=True)
 
                     if verbose:
                         display(vstats)
