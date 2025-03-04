@@ -489,14 +489,30 @@ def ReadStatFiles(datafolder, case, verbose=False):
             data.columns = [col.strip() for col in data.columns]
             # data=pd.concat([data,filenames],axis=1)
             data['Block'] = block.name
-            Files = [item.stem for item in Path(block, 'CH1').iterdir() if item.is_file()]
+            Files1 = [item.stem for item in Path(block, 'CH1').iterdir() if item.is_file()]
+            Files2 = [item.stem for item in Path(block, 'CH2').iterdir() if item.is_file()]
+            if len(Files1) != len(Files2):
+                print('Number of files in CH1 does not match number of files in CH2')
+                return None
+
+            Files = Files1.copy()
             Files.sort(key=lambda x: int(x[-6:]))
+            index = [int(item[-6:]) for item in Files]
             if verbose:
                 ic(len(Files))
                 ic(len(data))
-            if len(Files) != len(data):
-                print('Number of files in block does not match number of files in data')
-                return None, None
+            if len(Files) > len(data):
+                print('Number of files larger than number of entries in block file')
+                if any(index[:len(data)]) > len(data):
+                    print('Index out of range')
+                    return None
+                Files = Files[:len(data)]
+            if len(Files) < len(data):
+                print('More entries in block file than data files')
+                if max(index) > len(data):
+                    print('Index out of range')
+                    return None
+                data = data.loc[index]
             data['File'] = Files
             data['Point'] = data['Sequence Number'].apply(lambda x: int(x))
             Data = pd.concat([Data, data])
@@ -539,6 +555,7 @@ def LoadStatFiles(verbose=False):
     #     return
 
     Data = ReadStatFiles(settings['DataFolder'], settings['Case'], verbose=verbose)
+    print(Data)
     if Data is None:
         print('No blocks found')
         sys.exit(0)
@@ -1119,6 +1136,7 @@ def GetPointVelocity(currow, v, verbose):
         Display(Ch[1].head())
     # SaveXLS(settings['OutFolder'], 'ch1', Ch[0])
     # SaveXLS(settings['OutFolder'], 'ch2', Ch[1])
+
     V = ChannelToComponent(currow, Ch, v, verbose)
 
     Lbl = ['Velocity Ch. 1 (m/sec)', 'Velocity Ch. 2 (m/sec)']
@@ -1250,7 +1268,17 @@ def ExtractVelocityField(Data, verbose=False):
 
             for repeat in Repeat:
                 row = Data.loc[Data['File'] == repeat]
-                if row['Processed'].values > 0:
+                file = row['File'].values[0]
+                block = row['Block'].values[0]
+                file1 = Path(settings['DataFolder'], block, 'CH1', file).with_suffix('.csv')
+                file2 = Path(settings['DataFolder'], block, 'CH2', file).with_suffix('.csv')
+                if not file1.exists() or not file2.exists():
+                    if verbose:
+                        print("Data not found:", file)
+                    Data.loc[Data['File'] == repeat, 'Processed'] = -1
+                    continue
+
+                if row['Processed'].values[0]:
                     if verbose:
                         display('Skipped repeat %s' % repeat)
                     continue
@@ -1259,11 +1287,12 @@ def ExtractVelocityField(Data, verbose=False):
                     display('Repeat: '+repeat)
 
                 V = GetPointVelocity(row, V, verbose)
-                Data.loc[Data['File'] == repeat, 'Processed'] = 1
+                Data.loc[Data['File'] == repeat, 'Processed'] = Repeat.index(repeat)+1
 
                 for i in range(2):
                     if len(V[i]):
-                        Data = DataStats(Data, repeat, Lbls_Stats[i], V[i]['Velocity Ch. %d (m/sec)' % (i+1)])
+                        Data = DataStats(Data, repeat, Lbls_Stats[i],
+                                         V[i]['Velocity Ch. %d (m/sec)' % (i+1)])
 
             if verbose:
                 print(Row['File'])
@@ -1307,6 +1336,9 @@ def ComputeStats(verbose=False):
     Data['Processed'] = 0
 
     Data = ExtractVelocityField(Data, verbose=False)
+    SaveFTH(Path(settings['OutFolder'], '.'), '%s_Stats4' % settings['Case'], Data, verbose=False)
+    SaveXLS(Path(settings['OutFolder'], '.'), '%s_Stats4' % settings['Case'], Data, verbose=False)
+
     Data = Data.loc[Data['Processed'] == 1]
     Data = Data.reset_index(drop=True)
 
@@ -1314,8 +1346,8 @@ def ComputeStats(verbose=False):
 
     # display(Data)
 
-    SaveFTH(Path(settings['OutFolder'], '.'), '%s_Stats4' % settings['Case'], Data, verbose=False)
-    SaveXLS(Path(settings['OutFolder'], '.'), '%s_Stats4' % settings['Case'], Data, verbose=False)
+    SaveFTH(Path(settings['OutFolder'], '.'), '%s_Stats5' % settings['Case'], Data, verbose=False)
+    SaveXLS(Path(settings['OutFolder'], '.'), '%s_Stats5' % settings['Case'], Data, verbose=False)
 
     if verbose:
         print('Axial Vu', np.abs(Data.loc[Data['Orientation'] == 'Vu', 'V_Mean Ch. 2 (m/sec)']).max())
@@ -2019,7 +2051,7 @@ def PolarPlots(verbose=False, show=False):
     - ExportToVTKVtu: To export data to VTK format.
     """
 
-    DataPath = Path(settings['OutFolder'], '%s_Stats4.fth' % settings['Case'])
+    DataPath = Path(settings['OutFolder'], '%s_Stats5.fth' % settings['Case'])
     if not DataPath.exists():
         print('%s does not exist' % DataPath)
         sys.exit(0)
@@ -2029,7 +2061,7 @@ def PolarPlots(verbose=False, show=False):
 
     sw = 'S%04dW%04d' % (settings['Step']*100, settings['Wslot']*100)
     datafolder = Path(settings['OutFolder'], 'PolarStats', sw, 'Csv')
-    Statfile = [item for item in datafolder.iterdir()]
+    # Statfile = [item for item in datafolder.iterdir()]
     # print(Statfile)
 
     Planes = settings['PlaneRange']
@@ -2045,6 +2077,17 @@ def PolarPlots(verbose=False, show=False):
 
     print("%d planes:" % len(Planes), Planes)
 
+    Intervals, Ctrs = SetIntervals(settings['Period'], settings['Step'],
+                                   settings['Wleft'], settings['Wright'])
+    vstat0 = pd.DataFrame([], columns=['Slot',
+                                       'Ch. 1 samples', 'Ch. 1 mean', 'Ch. 1 sdev',
+                                       'Ch. 2 samples', 'Ch. 2 mean', 'Ch. 2 sdev'])
+    vstat0['Slot'] = Intervals
+    vstat0['Angular position (deg)'] = Intervals.left+settings['Wleft']
+    vstat0['Ch. 1 samples'] = vstat0['Ch. 2 samples'] = np.nan
+    vstat0['Ch. 1 mean'] = vstat0['Ch. 2 mean'] = np.nan
+    vstat0['Ch. 1 sdev'] = vstat0['Ch. 2 sdev'] = np.nan
+
     with tqdm(total=len(Planes), dynamic_ncols=True, desc="Plane P%02d" % Planes[0]) as pbar:
         for plane in Planes:
             cond0 = (Data['Plane'] == plane)
@@ -2057,50 +2100,40 @@ def PolarPlots(verbose=False, show=False):
                 if len(data) == 0:
                     continue
 
-                count = 0
-                for _, row in data.iterrows():
-                    statfile = Path(datafolder, '%s_Stats_%s_P%06d' % (settings['Case'], sw, row['Point']))
-                    statfile = statfile.with_suffix('.csv')
-
-                    if statfile in Statfile:
-                        count += 1
-                    else:
-                        if verbose:
-                            print('Missing %s' % statfile)
-                if count < len(data):
-                    print('Incomplete data for plane %d (%s): %d/%d points missing' % (plane, orientation,
-                                                                                       len(data)-count, len(data)))
-                    continue
-                if verbose:
-                    print('Data:', len(data), 'Count:', count)
-
+                data.sort_values(by=['R (mm)'], inplace=True, ignore_index=True)
                 R = data['R (mm)'] / settings['Rref']
-                R = np.sort(R)
+                # R = np.sort(R)
                 X = np.mean(data.loc[data['Plane'] == plane, 'X (mm)'])
 
                 if np.mean(R) < 1e-6:
                     print('Skipping plane %d (%s): R = %f' % (plane, orientation, np.mean(R)))
                     continue
                 # print('R:', len(R), data['Orientation'], data['Point'], len(data))
-                _, Ctrs = SetIntervals(settings['Period'], settings['Step'],
-                                       settings['Wleft'], settings['Wright'])
-
-                vstats = pd.DataFrame()
+                vstats = pd.DataFrame([], columns=['Slot',
+                                                   'Ch. 1 samples', 'Ch. 1 mean', 'Ch. 1 sdev',
+                                                   'Ch. 2 samples', 'Ch. 2 mean', 'Ch. 2 sdev'])
+                count = 0
                 for _, row in data.iterrows():
                     plane = row['Plane']
 
                     statfile = Path(datafolder, '%s_Stats_%s_P%06d' % (settings['Case'], sw, row['Point']))
                     statfile = statfile.with_suffix('.csv')
-
-                    vstat = pd.read_csv(statfile)
-                    if len(vstats) == 0:
-                        vstats = vstat
-                    else:
+                    print(statfile)
+                    if statfile.exists():
+                        vstat = pd.read_csv(statfile)
                         vstats = pd.concat([vstats, vstat], ignore_index=True)
+
+                        count += 1
+                    else:
+                        print('Missing %s' % statfile)
+                        vstats = pd.concat([vstats, vstat0], ignore_index=True)
 
                     if verbose:
                         display(vstats)
 
+                if count < len(data):
+                    print('%d of %d points missing in plane %d for %s' % (len(data)-count, len(data),
+                                                                          plane, orientation))
                 Block = BuildBlocks(R, Ctrs, orientation, vstats, verbose=False)
                 PlotVStatsPolar(Block, plane, orientation, X, show)
                 ExportToVTKVtu(Block, plane, orientation, X)
@@ -2128,7 +2161,7 @@ def PhaseAnalysis(verbose=False, show=False):
     of the single point analysis are shown.
     """
 
-    DataPath = Path(settings['OutFolder'], '%s_Stats4.fth' % settings['Case'])
+    DataPath = Path(settings['OutFolder'], '%s_Stats5.fth' % settings['Case'])
     if not DataPath.exists():
         print('%s does not exist' % DataPath)
         sys.exit(0)
