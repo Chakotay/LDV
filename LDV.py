@@ -63,39 +63,6 @@ pd.set_option('expand_frame_repr', False)
 pd.set_option('colheader_justify', 'right')
 
 
-def authorship():
-    return print(dedent("""LDV Data Analysis Script
-
-    Author:
-    - Francisco Alves Pereira (francisco.alvespereira@cnr.it)
-
-    Version: 0.9.2
-    Date: 2025-02-25
-
-    Description:
-    This script performs data analysis on Laser Doppler Velocimetry (LDV) measurements.
-    It includes functions for loading, processing, and visualizing LDV data,
-    as well as generating statistical summaries and exporting results to various formats.
-
-    Dependencies:
-    - Python 3.8+
-    - numpy
-    - pandas
-    - matplotlib
-    - scipy
-    - scikit-learn
-    - vtk
-    - tqdm
-    - openpyxl
-
-    License:
-    This script is released under the MIT License.
-
-    Usage:
-    python LDV.py <settings_filename>
-    """))
-
-
 def Display(data):
     """
     Displays the entire DataFrame in a Jupyter Notebook.
@@ -2210,6 +2177,39 @@ def PhaseAnalysis(verbose=False, show=False):
 
 
 # %% [Main]
+def authorship():
+    return print(dedent("""LDV Data Analysis Script
+
+    Author:
+    - Francisco Alves Pereira (francisco.alvespereira@cnr.it)
+
+    Version: 0.9.3
+    Date: 2025-03-04
+
+    Description:
+    This script performs data analysis on Laser Doppler Velocimetry (LDV) measurements.
+    It includes functions for loading, processing, and visualizing LDV data,
+    as well as generating statistical summaries and exporting results to various formats.
+
+    Dependencies:
+    - Python 3.8+
+    - numpy
+    - pandas
+    - matplotlib
+    - scipy
+    - scikit-learn
+    - vtk
+    - tqdm
+    - openpyxl
+
+    License:
+    This script is released under the MIT License.
+
+    Usage:
+    python LDV.py <settings_filename>
+    """))
+
+
 def GenerateDatabase(verbose=False):
     LoadStatFiles(verbose)
     FindPlanes(verbose)
