@@ -1834,7 +1834,8 @@ def BuildBlocks(radii, ctrs, orientation, vstats, verbose=False):
     """
 
     if verbose:
-        display(vstats)
+        print('BuildBlocks:', orientation)
+        ic(vstats)
     src1 = ['Ch. 1 samples', 'Ch. 1 mean', 'Ch. 1 sdev']
     src2 = ['Ch. 2 samples', 'Ch. 2 mean', 'Ch. 2 sdev']
     Src = [src1, src2]
@@ -2085,29 +2086,29 @@ def PolarPlots(verbose=False, show=False):
 
                     statfile = Path(datafolder, '%s_Stats_%s_P%06d' % (settings['Case'], sw, row['Point']))
                     statfile = statfile.with_suffix('.csv')
-                    # print(statfile)
+                    # print(count, statfile)
                     if statfile.exists():
                         vstat = pd.read_csv(statfile)
                         if count == 0:
                             vstats = vstat.copy()
                         else:
                             vstats = pd.concat([vstats, vstat], ignore_index=True)
-
-                        count += 1
                     else:
-                        print('Missing %s' % statfile)
+                        print('Missing %s (file count %d)' % (statfile, count))
                         if count == 0:
                             vstats = vstat0.copy()
                         else:
                             vstats = pd.concat([vstats, vstat0], ignore_index=True)
 
+                    count += 1
                     if verbose:
-                        display(vstats)
+                        ic(count)
+                        ic(vstats)
 
                 if count < len(data):
                     print('%d of %d points missing in plane %d for %s' % (len(data)-count, len(data),
                                                                           plane, orientation))
-                Block = BuildBlocks(R, Ctrs, orientation, vstats, verbose=False)
+                Block = BuildBlocks(R, Ctrs, orientation, vstats, verbose=verbose)
                 PlotVStatsPolar(Block, plane, orientation, X, show)
                 ExportToVTKVtu(Block, plane, orientation, X)
 
