@@ -2081,26 +2081,27 @@ def PolarPlots(verbose=False, show=False):
                                                    'Ch. 1 samples', 'Ch. 1 mean', 'Ch. 1 sdev',
                                                    'Ch. 2 samples', 'Ch. 2 mean', 'Ch. 2 sdev'])
                 count = 0
-                for _, row in data.iterrows():
+                for irow, row in data.iterrows():
                     plane = row['Plane']
 
                     statfile = Path(datafolder, '%s_Stats_%s_P%06d' % (settings['Case'], sw, row['Point']))
                     statfile = statfile.with_suffix('.csv')
-                    # print(count, statfile)
+                    # print(irow, statfile)
                     if statfile.exists():
                         vstat = pd.read_csv(statfile)
-                        if count == 0:
+                        if irow == 0:
                             vstats = vstat.copy()
                         else:
                             vstats = pd.concat([vstats, vstat], ignore_index=True)
+                        count += 1
                     else:
-                        print('Missing %s (file count %d)' % (statfile, count))
-                        if count == 0:
+                        if verbose:
+                            print('Missing %s (file index %d)' % (statfile, irow))
+                        if irow == 0:
                             vstats = vstat0.copy()
                         else:
                             vstats = pd.concat([vstats, vstat0], ignore_index=True)
 
-                    count += 1
                     if verbose:
                         ic(count)
                         ic(vstats)
