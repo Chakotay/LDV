@@ -151,7 +151,7 @@ def SetupLDV(f):
     PhaseAnalysis;True;True to run phase analysis
     RadiusRange;[0,220];Radius range for analysis (in mm)
     PlaneRange;[1];Plane range for analysis (-1 for all planes)
-    nStd;4;Number of std to remove spurious data
+    nStd;4.0;Number of std to remove spurious data
     Period;360.0;Modulo
     Step;2.0;Step between slots
     Wleft;1.0;Slot width to the left
@@ -258,14 +258,14 @@ def RunSettings(filename):
 
     Values = ['Root', 'PropModel', 'Case', 'Interpolation']
 
-    Values = ['Rref', 'Period', 'Step', 'Wleft', 'Wright',
+    Values = ['Rref', 'nStd', 'Period', 'Step', 'Wleft', 'Wright',
               'VerticalUpPhaseOffset', 'VerticalDownPhaseOffset',
               'HorizontalLeftPhaseOffset', 'HorizontalRightPhaseOffset',
               'RefractiveIndexCorrection']
     for value in Values:
         Settings.at[value, 'Value'] = float(Settings.at[value, 'Value'])
 
-    Values = ['RotationSign', 'nStd']
+    Values = ['RotationSign']
     for value in Values:
         Settings.at[value, 'Value'] = int(Settings.at[value, 'Value'])
 

@@ -17,7 +17,7 @@
     ExportMat;False;Export to .mat files
 
     ### Phase analysis setup
-    PhaseAnalysis;True;True to run phase analysis
+    PhaseAnalysis;False;True to run phase analysis
     RadiusRange;[0,220];Radius range for analysis (in mm)
     PlaneRange;[-1];Plane range for analysis (-1 for all planes)
     nStd;4;Number of std to remove spurious data
