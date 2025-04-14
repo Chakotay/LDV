@@ -511,32 +511,7 @@ def BuildBlocks(radii, ctrs, orientation, vstats, verbose=False):
     return [theta, rad, Vn, Vm, Vs]
 
 
-def PolarPlots(verbose=False, show=False):
-    """
-    Generate polar plots for LDV measurements.
-    Parameters:
-    verbose (bool): If True, print detailed information and display data.
-    show (bool): If True, display the plots.
-    This function reads measurement data from a feather file, processes it, and generates polar plots.
-    It checks for the existence of required data files and prints missing files if any.
-    The function iterates over specified planes and orientations, processes the data, and generates plots.
-    It also exports the processed data to VTK format.
-    The function uses the following settings from a global `settings` dictionary:
-    - 'OutFolder': Output folder path.
-    - 'Case': Case identifier.
-    - 'Step': Step size.
-    - 'Wslot': Slot width.
-    - 'PlaneRange': Range of planes to process.
-    - 'Rref': Reference radius.
-    - 'Period': Period for interval setting.
-    - 'Wleft': Left width for interval setting.
-    - 'Wright': Right width for interval setting.
-    The function uses the following external functions:
-    - SetIntervals: To set intervals for data processing.
-    - BuildBlocks: To build data blocks for plotting.
-    - PlotVStatsPolar: To plot the polar statistics.
-    - ExportToVTKVtu: To export data to VTK format.
-    """
+def Slice(verbose=False, show=False):
 
     DataPath = Path(settings['OutFolder'], '%s_Stats5.fth' % settings['Case'])
     if not DataPath.exists():
@@ -579,7 +554,11 @@ def PolarPlots(verbose=False, show=False):
     vstat0['Ch. 1 mean'] = vstat0['Ch. 2 mean'] = np.nan
     vstat0['Ch. 1 sdev'] = vstat0['Ch. 2 sdev'] = np.nan
 
+    ic(Ctrs)
     with tqdm(total=len(Planes), dynamic_ncols=True) as pbar:
+        vstats = {}
+        nx = 50
+        ny = 20
         for orientation in ['Vu', 'Vd', 'Hl', 'Hr']:
             cond0 = (Data['Orientation'] == orientation)
             cond1 = (Data['R (mm)'] > 0.0)
@@ -587,9 +566,12 @@ def PolarPlots(verbose=False, show=False):
             if len(data) == 0:
                 continue
 
-            vstats = pd.DataFrame([], columns=['Slot', 'Angular position (deg)', 'R', 'X',
-                                               'Ch. 1 samples', 'Ch. 1 mean', 'Ch. 1 sdev',
-                                               'Ch. 2 samples', 'Ch. 2 mean', 'Ch. 2 sdev'])
+            orient = ('Up' if orientation == 'Vu' else
+                      'Down' if orientation == 'Vd' else
+                      'Left' if orientation == 'Hl' else 'Right')
+            vstats[orient] = pd.DataFrame([], columns=['Slot', 'Angular position (deg)', 'R', 'X',
+                                                       'Ch. 1 samples', 'Ch. 1 mean', 'Ch. 1 sdev',
+                                                       'Ch. 2 samples', 'Ch. 2 mean', 'Ch. 2 sdev'])
             count = 0
             data.reset_index(drop=True, inplace=True)
             for irow, row in data.iterrows():
@@ -607,35 +589,39 @@ def PolarPlots(verbose=False, show=False):
                     vstat['X'] = X
                     # ic(irow, len(vstat), len(vstats))
                     if irow == 0:
-                        vstats = vstat.copy()
+                        vstats[orient] = vstat.copy()
                     else:
-                        vstats = pd.concat([vstats, vstat], ignore_index=True)
+                        vstats[orient] = pd.concat([vstats[orient], vstat], ignore_index=True)
                     count += 1
                 else:
                     if verbose:
                         print('Missing %s (file index %d)' % (statfile, irow))
                     if irow == 0:
-                        vstats = vstat0.copy()
+                        vstats[orient] = vstat0.copy()
                     else:
-                        vstats = pd.concat([vstats, vstat0], ignore_index=True)
+                        vstats[orient] = pd.concat([vstats[orient], vstat0], ignore_index=True)
 
                 if verbose:
                     ic(count)
-                    ic(vstats)
+                    ic(vstats[orient], len(vstats[orient]))
 
             if count < len(data):
-                print('%d of %d points missing for %s' % (len(data)-count, len(data), orientation))
-            ic(orientation, len(data), count)
-            vstats.sort_values(by=['Angular position (deg)', 'R', 'X'], inplace=True)
-            vstats.reset_index(drop=True, inplace=True)
-            ic(vstats)
+                print('%d of %d points missing for %s (%s)' % (len(data)-count, len(data), orient, orientation))
+            ic(orient, len(data), count)
+            vstats[orient].sort_values(by=['Angular position (deg)', 'R', 'X'], inplace=True)
+            vstats[orient].reset_index(drop=True, inplace=True)
+            ic(vstats[orient])
             # Block = BuildBlocks(R, Ctrs, orientation, vstats, verbose=verbose)
             # ExportToVTKVtu(Block, plane, orientation, X)
 
-            ic(Ctrs)
             # PlotVStatsPolar(Block, orientation, X)
-            for interval in Intervals[::]:
-                slice = vstats.loc[vstats['Slot'] == str(interval)].copy()
+        for interval in Intervals[::]:
+            new_slice = True
+            for orient in vstats.keys():
+                ic('key:', orient)
+
+                slice = vstats[orient].loc[vstats[orient]['Slot'] == str(interval)].copy()
+
                 angle = np.median(slice['Angular position (deg)'].to_numpy())
                 angle_s = np.std(slice['Angular position (deg)'].to_numpy())
                 ic(angle, angle_s, len(slice))
@@ -644,50 +630,108 @@ def PolarPlots(verbose=False, show=False):
                 sin = np.sin(np.deg2rad(angle))
                 x = slice['X'].to_numpy()
                 r = slice['R'].to_numpy()
-                v = slice['Ch. 1 mean'].to_numpy()
                 pts = np.vstack([x, r]).T
 
                 slice['X'] = x
                 slice['Y'] = r*cos
                 slice['Z'] = r*sin
                 if interval == Intervals[0]:
-                    slice.to_csv(Path(outfolder, 'slice_%s.csv' % orientation), index=False)
+                    slice.to_csv(Path(outfolder, 'Slice_%s.csv' % orient), index=False)
 
-                np.nan_to_num(v, copy=False)
-                cond = ~np.isnan(v)
-                ic(np.count_nonzero(cond))
-                pts = pts[cond]
-                v = v[cond]
-                ic(len(v))
+                X = np.linspace(x.min(), x.max(), nx)
+                Y = np.linspace(r.min(), r.max(), ny)
+                dX = (X.max() - X.min())/(len(X)-1)
+                dY = (Y.max() - Y.min())/(len(Y)-1)
 
-                interp = RBFInterpolator(pts, v,
-                                         smoothing=0.0,
-                                         kernel='linear')
-                ic(interp.kernel)
-
-                X = np.linspace(x.min(), x.max(), 50)
-                Y = np.linspace(r.min(), r.max(), 20)
                 Xi, Yi = np.meshgrid(X, Y)
                 xi = Xi.flatten()
                 yi = Yi.flatten()
                 # xi = x
                 # yi = r
                 Pts = np.vstack([xi, yi]).T
-                V = interp(Pts)
 
                 zi = yi*sin
                 yi = yi*cos
-                ic(xi.shape, yi.shape, zi.shape, V.shape)
+                ic(xi.shape, yi.shape, zi.shape)
 
-                Slice = pd.DataFrame([xi, yi, zi, V]).T
-                Slice.columns = ['X', 'Y', 'Z', 'V']
-                ic(Slice)
+                if new_slice:
+                    Slice = pd.DataFrame([xi, yi, zi]).T
+                    Slice.columns = ['X', 'Y', 'Z']
+                    new_slice = False
 
-                slicefile = Path(outfolder, 'Slice_%s_A%03d.csv' % (orientation, int(angle)))
-                Slice.to_csv(slicefile, index=False)
+                for i in [1, 2]:
+                    if orient in ['Up', 'Down']:
+                        comp = 'radial' if i == 1 else 'axial'
+                    else:
+                        comp = 'tangential' if i == 1 else 'axial'
 
-                # Block = BuildBlocks(vstats['R'].to_numpy(), ctr, orientation, vstats, verbose=verbose)
-                # ExportToVTKVtu(Block, row['Plane'], orientation, X)
+                    vn = 'Count %s velocity (%s)' % (comp, orient)
+                    vm = 'Mean %s velocity (%s)' % (comp, orient)
+                    vs = 'RMS %s velocity (%s)' % (comp, orient)
+                    Var = [[f'Ch. {i} samples', vn], [f'Ch. {i} mean', vm], [f'Ch. {i} sdev', vs]]
+                    for var in Var:
+                        ch, name = var
+
+                        v = slice[ch].to_numpy()
+                        np.nan_to_num(v, copy=False)
+                        cond = ~np.isnan(v)
+                        ic(np.count_nonzero(cond))
+                        pts = pts[cond]
+                        v = v[cond]
+                        ic(len(v))
+
+                        interp = RBFInterpolator(pts, v,
+                                                 smoothing=0.0,
+                                                 kernel='linear')
+                        ic(interp.kernel)
+
+                        V = interp(Pts)
+                        ic(V.shape)
+
+                        Slice[name] = V.T
+                        # ic(Slice)
+
+            Vort = {'Mean axial vorticity': ['Mean tangential velocity (Left)', 'Mean radial velocity (Up)'],
+                    'Mean radial vorticity (Up)': ['Mean axial velocity (Up)', 'Mean tangential velocity (Left)'],
+                    'Mean radial vorticity (Left)': ['Mean axial velocity (Left)', 'Mean tangential velocity (Left)'],
+                    'Mean tangential vorticity (Up)': ['Mean radial velocity (Up)', 'Mean axial velocity (Up)'],
+                    'Mean tangential vorticity (Left)': ['Mean radial velocity (Up)', 'Mean axial velocity (Left)']}
+            for vort in Vort.keys():
+                ic(vort, Vort[vort], Vort[vort][0], Vort[vort][1], dX, dY)
+                u = Slice[Vort[vort][0]].to_numpy()
+                v = Slice[Vort[vort][1]].to_numpy()
+                ic(u.shape, v.shape)
+                u = np.reshape(u, (ny, nx))
+                v = np.reshape(v, (ny, nx))
+                ic(u.shape, v.shape)
+                du = np.gradient(u, dY, axis=0, edge_order=2)
+                dv = np.gradient(v, dX, axis=1, edge_order=2)
+                Slice[vort] = (dv - du).flatten()
+            Slice['Vorticity magnitude (Up)'] = np.sqrt(
+                Slice['Mean axial vorticity']**2 +
+                Slice['Mean radial vorticity (Up)']**2 +
+                Slice['Mean tangential vorticity (Up)']**2)
+            Slice['Vorticity magnitude (Left)'] = np.sqrt(
+                Slice['Mean axial vorticity']**2 +
+                Slice['Mean radial vorticity (Left)']**2 +
+                Slice['Mean tangential vorticity (Left)']**2)
+
+            Slice['TKE (Up)'] = (
+                Slice['RMS axial velocity (Up)']**2 +
+                Slice['RMS radial velocity (Up)']**2 +
+                Slice['RMS tangential velocity (Left)']**2)/2
+
+            Slice['TKE (Left)'] = (
+                Slice['RMS axial velocity (Left)']**2 +
+                Slice['RMS radial velocity (Up)']**2 +
+                Slice['RMS tangential velocity (Left)']**2)/2
+
+            slicefile = Path(outfolder, 'Slice_A%03d.csv' % int(angle))
+            Slice.to_csv(slicefile, index=False)
+
+            # Block = BuildBlocks(vstats['R'].to_numpy(), ctr, orientation, vstats, verbose=verbose)
+            # ExportToVTKVtu(Block, row['Plane'], orientation, X)
+
 
 # %% [Main]
 args = [arg for arg in sys.argv[1:] if not arg.startswith('-')]
@@ -706,4 +750,4 @@ global settings
 settings = RunSettings(settings_filename)
 # display(settings)
 
-PolarPlots(settings['Verbose'], settings['ShowPolarPlots'])
+Slice(settings['Verbose'], settings['ShowPolarPlots'])
