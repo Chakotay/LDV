@@ -311,8 +311,9 @@ def MakeVtkDataset(tri, z):
     vtk_dataset = vtkUnstructuredGrid()
     pts = vtkPoints()
     for id, pt in enumerate(tri.points):
+        ic(id, pt)
         x, y = pt
-        pts.InsertPoint(id, [x, y, z])
+        pts.InsertPoint(id, [x, y, z[id]])
     vtk_dataset.SetPoints(pts)
 
     vtk_dataset.Allocate(tri.nsimplex)
@@ -511,7 +512,7 @@ def BuildBlocks(radii, ctrs, orientation, vstats, verbose=False):
     return [theta, rad, Vn, Vm, Vs]
 
 
-def Slice(verbose=False, show=False):
+def Slice(nx=10, ny=10, verbose=False):
 
     DataPath = Path(settings['OutFolder'], '%s_Stats5.fth' % settings['Case'])
     if not DataPath.exists():
@@ -555,10 +556,10 @@ def Slice(verbose=False, show=False):
     vstat0['Ch. 1 sdev'] = vstat0['Ch. 2 sdev'] = np.nan
 
     ic(Ctrs)
+    reps = int(360/settings['Period'])
+    ic(reps)
     with tqdm(total=len(Planes), dynamic_ncols=True) as pbar:
         vstats = {}
-        nx = 50
-        ny = 20
         for orientation in ['Vu', 'Vd', 'Hl', 'Hr']:
             cond0 = (Data['Orientation'] == orientation)
             cond1 = (Data['R (mm)'] > 0.0)
@@ -613,8 +614,27 @@ def Slice(verbose=False, show=False):
             ic(vstats[orient])
             # Block = BuildBlocks(R, Ctrs, orientation, vstats, verbose=verbose)
             # ExportToVTKVtu(Block, plane, orientation, X)
+        xmin = ymin = 1e-6
+        xmax = ymax = -1e-6
+        for orient in vstats.keys():
+            ic(orient, len(vstats[orient]))
+            if xmin > vstats[orient]['X'].min():
+                xmin = vstats[orient]['X'].min()
+            if xmax < vstats[orient]['X'].max():
+                xmax = vstats[orient]['X'].max()
+            if ymin > vstats[orient]['R'].min():
+                ymin = vstats[orient]['R'].min()
+            if ymax < vstats[orient]['R'].max():
+                ymax = vstats[orient]['R'].max()
+        X = np.linspace(xmin, xmax, nx)
+        Y = np.linspace(ymin, ymax, ny)
+        dX = (xmax - xmin)/(len(X)-1)
+        dY = (ymax - ymin)/(len(Y)-1)
 
-            # PlotVStatsPolar(Block, orientation, X)
+        Xi, Yi = np.meshgrid(X, Y)
+        xi = Xi.flatten()
+        yi = Yi.flatten()
+
         for interval in Intervals[::]:
             new_slice = True
             for orient in vstats.keys():
@@ -638,25 +658,15 @@ def Slice(verbose=False, show=False):
                 if interval == Intervals[0]:
                     slice.to_csv(Path(outfolder, 'Slice_%s.csv' % orient), index=False)
 
-                X = np.linspace(x.min(), x.max(), nx)
-                Y = np.linspace(r.min(), r.max(), ny)
-                dX = (X.max() - X.min())/(len(X)-1)
-                dY = (Y.max() - Y.min())/(len(Y)-1)
-
-                Xi, Yi = np.meshgrid(X, Y)
-                xi = Xi.flatten()
-                yi = Yi.flatten()
                 # xi = x
                 # yi = r
                 Pts = np.vstack([xi, yi]).T
 
-                zi = yi*sin
-                yi = yi*cos
-                ic(xi.shape, yi.shape, zi.shape)
-
                 if new_slice:
-                    Slice = pd.DataFrame([xi, yi, zi]).T
+                    Slice = pd.DataFrame([xi, yi*cos, yi*sin]).T
                     Slice.columns = ['X', 'Y', 'Z']
+                    Slice['Angular position (deg)'] = angle
+                    Slice['R'] = np.sqrt(Slice['Y']**2 + Slice['Z']**2)
                     new_slice = False
 
                 for i in [1, 2]:
@@ -682,7 +692,7 @@ def Slice(verbose=False, show=False):
 
                         interp = RBFInterpolator(pts, v,
                                                  smoothing=0.0,
-                                                 kernel='linear')
+                                                 kernel=settings['Interpolation'])
                         ic(interp.kernel)
 
                         V = interp(Pts)
@@ -690,6 +700,15 @@ def Slice(verbose=False, show=False):
 
                         Slice[name] = V.T
                         # ic(Slice)
+
+            Slice['Velocity magnitude (Up)'] = np.sqrt(
+                Slice['Mean axial velocity (Up)']**2 +
+                Slice['Mean radial velocity (Up)']**2 +
+                Slice['Mean tangential velocity (Left)']**2)
+            Slice['Velocity magnitude (Left)'] = np.sqrt(
+                Slice['Mean axial velocity (Left)']**2 +
+                Slice['Mean radial velocity (Up)']**2 +
+                Slice['Mean tangential velocity (Left)']**2)
 
             Vort = {'Mean axial vorticity': ['Mean tangential velocity (Left)', 'Mean radial velocity (Up)'],
                     'Mean radial vorticity (Up)': ['Mean axial velocity (Up)', 'Mean tangential velocity (Left)'],
@@ -726,8 +745,45 @@ def Slice(verbose=False, show=False):
                 Slice['RMS radial velocity (Up)']**2 +
                 Slice['RMS tangential velocity (Left)']**2)/2
 
-            slicefile = Path(outfolder, 'Slice_A%03d.csv' % int(angle))
-            Slice.to_csv(slicefile, index=False)
+            Vol = Slice.copy()
+            ic(Vol['Angular position (deg)'])
+            for rep in np.arange(1, reps):
+                rot = Vol['Angular position (deg)'] + settings['Period']*rep
+                cos = np.cos(np.deg2rad(rot))
+                sin = np.sin(np.deg2rad(rot))
+                Vol['Y'] = Vol['R']*cos
+                Vol['Z'] = Vol['R']*sin
+                Slice = pd.concat([Slice, Vol], ignore_index=True)
+
+
+            slicefile = Path(outfolder, 'Slice_A%03d' % int(angle))
+            Slice.to_csv(slicefile.with_suffix('.csv'), index=False)
+
+            # Pts = np.vstack([xi, yi]).T
+            # tri = Delaunay(Pts)
+            # Z = Slice['Z'].to_numpy()
+            # vtk_dataset = MakeVtkDataset(tri, Slice['Z'].to_numpy().T)
+            # ic(vtk_dataset.GetNumberOfPoints())
+            # axial = [var for var in Slice.columns if 'axial velocity' in var.lower()]
+            # radial = [var for var in Slice.columns if 'radial velocity' in var.lower()]
+            # tangential = [var for var in Slice.columns if 'tangential velocity' in var.lower()]
+            # magnitude = [var for var in Slice.columns if 'velocity magnitude' in var.lower()]
+            # vorticity = [var for var in Slice.columns if 'vorticity' in var.lower()]
+            # turbulence = [var for var in Slice.columns if 'tke' in var.lower()]
+            # Var = [[axial, 'Axial velocity'],
+            #        [radial, 'Radial velocity'],
+            #        [tangential, 'Tangential velocity'],
+            #        [magnitude, 'Velocity magnitude'],
+            #        [vorticity, 'Vorticity'],
+            #        [turbulence, 'TKE']]
+            # for var in Var:
+            #     cnames, lbl = var
+            #     vtk_dataset = AddArray(vtk_dataset, lbl,
+            #                            [slice for slice in Slice[cnames].to_numpy().T], cnames)
+            # writer = vtkXMLUnstructuredGridWriter()
+            # writer.SetFileName(slicefile.with_suffix('.vtu'))
+            # writer.SetInputData(vtk_dataset)
+            # writer.Write()
 
             # Block = BuildBlocks(vstats['R'].to_numpy(), ctr, orientation, vstats, verbose=verbose)
             # ExportToVTKVtu(Block, row['Plane'], orientation, X)
@@ -735,19 +791,17 @@ def Slice(verbose=False, show=False):
 
 # %% [Main]
 args = [arg for arg in sys.argv[1:] if not arg.startswith('-')]
-# print("Args:", args)
-if len(args) != 1:
-    if Path('SettingsLDV.csv').exists():
-        settings_filename = 'SettingsLDV.csv'
-        print('Using default settings file')
-    else:
-        print('Found no default settings file (SettingsLDV.csv)\n')
-        sys.exit(0)
+ic(args, len(args))
+
+if len(args) != 3:
+    print('Usage: %s <settings file> <nx> <ny>' % Path(__file__).name)
+    sys.exit(0)
 else:
     settings_filename = args[0]
-
+    nx = int(args[1])
+    ny = int(args[2])
 global settings
 settings = RunSettings(settings_filename)
 # display(settings)
 
-Slice(settings['Verbose'], settings['ShowPolarPlots'])
+Slice(nx, ny, settings['Verbose'])
