@@ -544,7 +544,8 @@ def Slice(nx=10, ny=10, verbose=False):
 
     Intervals, Ctrs = SetIntervals(settings['Period'], settings['Step'],
                                    settings['Wleft'], settings['Wright'])
-    vstat0 = pd.DataFrame([], columns=['Slot', 'Angular position (deg)', 'R', 'X',
+    vstat0 = pd.DataFrame([], columns=['Slot', 'Angular position (deg)',
+                                       'R', 'X',
                                        'Ch. 1 samples', 'Ch. 1 mean', 'Ch. 1 sdev',
                                        'Ch. 2 samples', 'Ch. 2 mean', 'Ch. 2 sdev'])
     vstat0['Slot'] = Intervals
@@ -561,61 +562,152 @@ def Slice(nx=10, ny=10, verbose=False):
     with tqdm(total=len(Planes), dynamic_ncols=True) as pbar:
         vstats = {}
         for orientation in ['Vu', 'Vd', 'Hl', 'Hr']:
-            cond0 = (Data['Orientation'] == orientation)
-            cond1 = (Data['R (mm)'] > 0.0)
-            data = Data[cond0 & cond1].copy()
-            if len(data) == 0:
-                continue
 
             orient = ('Up' if orientation == 'Vu' else
                       'Down' if orientation == 'Vd' else
                       'Left' if orientation == 'Hl' else 'Right')
-            vstats[orient] = pd.DataFrame([], columns=['Slot', 'Angular position (deg)', 'R', 'X',
+            vstats[orient] = pd.DataFrame([], columns=['Slot', 'Angular position (deg)',
+                                                       'R', 'X',
                                                        'Ch. 1 samples', 'Ch. 1 mean', 'Ch. 1 sdev',
                                                        'Ch. 2 samples', 'Ch. 2 mean', 'Ch. 2 sdev'])
-            count = 0
-            data.reset_index(drop=True, inplace=True)
-            for irow, row in data.iterrows():
-                R = row['R (mm)'] / settings['Rref']
-                if R < 1e-6:
+
+            cond0 = (Data['Orientation'] == orientation)
+            cond1 = (Data['R (mm)'] > 0.0)
+            for plane in Planes[:5:]:
+
+                cond2 = (Data['Plane'] == plane)
+                data = Data[cond0 & cond1 & cond2].copy()
+                if len(data) == 0:
                     continue
-                X = row['X (mm)'] / settings['Rref']
+                ic(orient, len(Data[cond0 & cond1]), len(Data[cond0 & cond1 & cond2]))
 
-                statfile = Path(datafolder, '%s_Stats_%s_P%06d' % (settings['Case'], sw, row['Point']))
-                statfile = statfile.with_suffix('.csv')
+                count = 0
+                data.reset_index(drop=True, inplace=True)
+                for irow, row in data.iterrows():
+                    R = row['R (mm)'] / settings['Rref']
+                    if R < 1e-6:
+                        continue
+                    Xp = row['X (mm)'] / settings['Rref']
 
-                if statfile.exists():
-                    vstat = pd.read_csv(statfile)
-                    vstat['R'] = R
-                    vstat['X'] = X
-                    # ic(irow, len(vstat), len(vstats))
-                    if irow == 0:
-                        vstats[orient] = vstat.copy()
+                    statfile = Path(datafolder, '%s_Stats_%s_P%06d' % (settings['Case'], sw, row['Point']))
+                    statfile = statfile.with_suffix('.csv')
+
+                    if statfile.exists():
+                        vstat = pd.read_csv(statfile)
+                        vstat['R'] = R
+                        vstat['X'] = Xp
+                        # ic(irow, len(vstat), len(vstats))
+                        if count == 0:
+                            vstatp = vstat.copy()
+                        else:
+                            vstatp = pd.concat([vstatp, vstat], ignore_index=True)
+                        count += 1
                     else:
-                        vstats[orient] = pd.concat([vstats[orient], vstat], ignore_index=True)
-                    count += 1
+                        print('File not found:', statfile)
+                        continue
+                        # if verbose:
+                        #     print('Missing %s (file index %d)' % (statfile, irow))
+                        # if irow == 0:
+                        #     vstatp = vstat0.copy()
+                        # else:
+                        #     vstatp = pd.concat([vstatp, vstat0], ignore_index=True)
+
+                    # ic(count)
+                    # ic(vstatp, len(vstatp))
+
+                if count < len(data):
+                    print('%d of %d points missing for %s (%s) in plane %d' % (len(data)-count, len(data), orient, orientation, plane))
+                ic(orient, plane, len(data), count)
+
+                vstatp['Y'] = vstatp['R'] # * np.cos(np.deg2rad(vstatp['Angular position (deg)']))
+                vstatp['Z'] = vstatp['R'] # * np.sin(np.deg2rad(vstatp['Angular position (deg)']))
+                vstatp.sort_values(by=['Angular position (deg)', 'R', 'X'], inplace=True)
+                vstatp.reset_index(drop=True, inplace=True)
+
+                slicefile = Path(outfolder, 'Slice_%s_P%03d' % (orient, plane))
+                vstatp.to_csv(slicefile.with_suffix('.csv'), index=False)
+
+                rad = vstatp['R'].to_numpy()
+                theta = vstatp['Angular position (deg)'].to_numpy()
+
+                pts = np.vstack([theta, rad]).T
+
+                # Create interpolation grid
+                Rad = np.unique(rad)
+                Theta = np.unique(theta)
+                ic(Rad, Theta)
+                ic(len(Rad), len(Theta))
+
+                X = np.linspace(Theta.min(), Theta.max(), len(Theta)*2)
+                Y = np.linspace(Rad.min(), Rad.max(), len(Rad)*2)
+
+                # X = theta
+                # Y = rad
+                Xi, Yi = np.meshgrid(X, Y)
+                xi = Xi.flatten()
+                yi = Yi.flatten()
+                Pts = np.vstack([xi, yi]).T
+
+                vstatpi = pd.DataFrame()
+                vstatpi['R'] = yi
+                vstatpi['Y'] = yi # * np.cos(np.deg2rad(xi))
+                vstatpi['Z'] = yi # * np.sin(np.deg2rad(xi))
+                vstatpi['X'] = Xp
+
+                # Use original grid
+                Pts = pts
+                vstatpi = vstatp.copy()
+
+                for i in [1, 2]:
+                    if orient in ['Up', 'Down']:
+                        comp = 'radial' if i == 1 else 'axial'
+                    else:
+                        comp = 'tangential' if i == 1 else 'axial'
+
+                    vn = 'Count %s velocity (%s)' % (comp, orient)
+                    vm = 'Mean %s velocity (%s)' % (comp, orient)
+                    vs = 'RMS %s velocity (%s)' % (comp, orient)
+                    Var = [[f'Ch. {i} samples', vn], [f'Ch. {i} mean', vm], [f'Ch. {i} sdev', vs]]
+                    for var in Var:
+                        ch, name = var
+
+                        v = vstatp[ch].to_numpy()
+                        np.nan_to_num(v, copy=False)
+                        cond = ~np.isnan(v)
+                        # ic(np.count_nonzero(cond))
+                        pts = pts[cond]
+                        v = v[cond]
+                        # ic(ch, len(v))
+
+                        interp = RBFInterpolator(pts, v,
+                                                 smoothing=1,
+                                                 kernel=settings['Interpolation'])
+                        # ic(interp.kernel)
+
+                        V = interp(Pts)
+                        # ic(V.shape)
+
+                        if i == 1 and var[0] == 'Ch. 1 samples':
+                            vstatpi[name] = V.T
+                        else:
+                            vstatpi = pd.concat([vstatpi, pd.DataFrame({name: V.T})], axis=1)
+                        # ic(vstatpi[name])
+
+                if plane == 0:
+                    vstats[orient] = vstatpi.copy()
                 else:
-                    if verbose:
-                        print('Missing %s (file index %d)' % (statfile, irow))
-                    if irow == 0:
-                        vstats[orient] = vstat0.copy()
-                    else:
-                        vstats[orient] = pd.concat([vstats[orient], vstat0], ignore_index=True)
+                    vstats[orient] = pd.concat([vstats[orient], vstatpi], ignore_index=True)
 
-                if verbose:
-                    ic(count)
-                    ic(vstats[orient], len(vstats[orient]))
+                slicefile = Path(outfolder, 'Slice_%s_Interp_P%03d' % (orient, plane))
+                vstatpi.to_csv(slicefile.with_suffix('.csv'), index=False)
 
-            if count < len(data):
-                print('%d of %d points missing for %s (%s)' % (len(data)-count, len(data), orient, orientation))
-            ic(orient, len(data), count)
-            vstats[orient].sort_values(by=['Angular position (deg)', 'R', 'X'], inplace=True)
-            vstats[orient].reset_index(drop=True, inplace=True)
-            ic(vstats[orient])
-            # Block = BuildBlocks(R, Ctrs, orientation, vstats, verbose=verbose)
-            # ExportToVTKVtu(Block, plane, orientation, X)
-        xmin = ymin = 1e-6
-        xmax = ymax = -1e-6
+            if len(vstats[orient]) == 0:
+                vstats.pop(orient)
+                continue
+            ic(plane, vstats[orient], vstats.keys())
+
+        xmin = ymin = 1e6
+        xmax = ymax = -1e6
         for orient in vstats.keys():
             ic(orient, len(vstats[orient]))
             if xmin > vstats[orient]['X'].min():
@@ -628,8 +720,10 @@ def Slice(nx=10, ny=10, verbose=False):
                 ymax = vstats[orient]['R'].max()
         X = np.linspace(xmin, xmax, nx)
         Y = np.linspace(ymin, ymax, ny)
+        ic(X, Y)
         dX = (xmax - xmin)/(len(X)-1)
         dY = (ymax - ymin)/(len(Y)-1)
+        ic(dX, dY)
 
         Xi, Yi = np.meshgrid(X, Y)
         xi = Xi.flatten()
@@ -638,13 +732,13 @@ def Slice(nx=10, ny=10, verbose=False):
         for interval in Intervals[::]:
             new_slice = True
             for orient in vstats.keys():
-                ic('key:', orient)
+                # ic('key:', orient)
 
                 slice = vstats[orient].loc[vstats[orient]['Slot'] == str(interval)].copy()
 
                 angle = np.median(slice['Angular position (deg)'].to_numpy())
                 angle_s = np.std(slice['Angular position (deg)'].to_numpy())
-                ic(angle, angle_s, len(slice))
+                # ic(angle, angle_s, len(slice))
 
                 cos = np.cos(np.deg2rad(angle))
                 sin = np.sin(np.deg2rad(angle))
@@ -652,9 +746,9 @@ def Slice(nx=10, ny=10, verbose=False):
                 r = slice['R'].to_numpy()
                 pts = np.vstack([x, r]).T
 
-                slice['X'] = x
-                slice['Y'] = r*cos
-                slice['Z'] = r*sin
+                #slice['X'] = x
+                #slice['Y'] = r*cos
+                #slice['Z'] = r*sin
                 if interval == Intervals[0]:
                     slice.to_csv(Path(outfolder, 'Slice_%s.csv' % orient), index=False)
 
@@ -685,18 +779,18 @@ def Slice(nx=10, ny=10, verbose=False):
                         v = slice[ch].to_numpy()
                         np.nan_to_num(v, copy=False)
                         cond = ~np.isnan(v)
-                        ic(np.count_nonzero(cond))
+                        # ic(np.count_nonzero(cond))
                         pts = pts[cond]
                         v = v[cond]
-                        ic(len(v))
+                        # ic(ch, len(v))
 
                         interp = RBFInterpolator(pts, v,
                                                  smoothing=0.0,
                                                  kernel=settings['Interpolation'])
-                        ic(interp.kernel)
+                        # ic(interp.kernel)
 
                         V = interp(Pts)
-                        ic(V.shape)
+                        # ic(V.shape)
 
                         Slice[name] = V.T
                         # ic(Slice)
@@ -716,13 +810,13 @@ def Slice(nx=10, ny=10, verbose=False):
                     'Mean tangential vorticity (Up)': ['Mean radial velocity (Up)', 'Mean axial velocity (Up)'],
                     'Mean tangential vorticity (Left)': ['Mean radial velocity (Up)', 'Mean axial velocity (Left)']}
             for vort in Vort.keys():
-                ic(vort, Vort[vort], Vort[vort][0], Vort[vort][1], dX, dY)
+                # ic(vort, Vort[vort], Vort[vort][0], Vort[vort][1], dX, dY)
                 u = Slice[Vort[vort][0]].to_numpy()
                 v = Slice[Vort[vort][1]].to_numpy()
-                ic(u.shape, v.shape)
+                # ic(u.shape, v.shape)
                 u = np.reshape(u, (ny, nx))
                 v = np.reshape(v, (ny, nx))
-                ic(u.shape, v.shape)
+                # ic(u.shape, v.shape)
                 du = np.gradient(u, dY, axis=0, edge_order=2)
                 dv = np.gradient(v, dX, axis=1, edge_order=2)
                 Slice[vort] = (dv - du).flatten()
@@ -745,17 +839,17 @@ def Slice(nx=10, ny=10, verbose=False):
                 Slice['RMS radial velocity (Up)']**2 +
                 Slice['RMS tangential velocity (Left)']**2)/2
 
-            Vol = Slice.copy()
-            ic(Vol['Angular position (deg)'])
-            for rep in np.arange(1, reps):
-                rot = Vol['Angular position (deg)'] + settings['Period']*rep
-                cos = np.cos(np.deg2rad(rot))
-                sin = np.sin(np.deg2rad(rot))
-                Vol['Y'] = Vol['R']*cos
-                Vol['Z'] = Vol['R']*sin
-                Slice = pd.concat([Slice, Vol], ignore_index=True)
+            # Vol = Slice.copy()
+            # ic(Vol['Angular position (deg)'])
+            # for rep in np.arange(1, reps):
+            #     rot = Vol['Angular position (deg)'] + settings['Period']*rep
+            #     cos = np.cos(np.deg2rad(rot))
+            #     sin = np.sin(np.deg2rad(rot))
+            #     Vol['Y'] = Vol['R']*cos
+            #     Vol['Z'] = Vol['R']*sin
+            #     Slice = pd.concat([Slice, Vol], ignore_index=True)
 
-
+            Slice.sort_values(by=['X', 'R', 'Angular position (deg)'], inplace=True)
             slicefile = Path(outfolder, 'Slice_A%03d' % int(angle))
             Slice.to_csv(slicefile.with_suffix('.csv'), index=False)
 
