@@ -609,7 +609,7 @@ def Slice(nx=10, ny=10, verbose=False):
                         #     print('Missing %s (file index %d)' % (statfile, irow))
                         # if irow == 0:
                         #     vstatp = vstat0.copy()
-                        # else:
+                        # else:
                         #     vstatp = pd.concat([vstatp, vstat0], ignore_index=True)
 
                     # ic(count)
@@ -619,44 +619,14 @@ def Slice(nx=10, ny=10, verbose=False):
                     print('%d of %d points missing for %s (%s) in plane %d' % (len(data)-count, len(data), orient, orientation, plane))
                 ic(orient, plane, len(data), count)
 
-                vstatp['Y'] = vstatp['R'] # * np.cos(np.deg2rad(vstatp['Angular position (deg)']))
-                vstatp['Z'] = vstatp['R'] # * np.sin(np.deg2rad(vstatp['Angular position (deg)']))
+                vstatp['Y'] = vstatp['R'] * np.cos(np.deg2rad(vstatp['Angular position (deg)']))
+                vstatp['Z'] = vstatp['R'] * np.sin(np.deg2rad(vstatp['Angular position (deg)']))
                 vstatp.sort_values(by=['Angular position (deg)', 'R', 'X'], inplace=True)
                 vstatp.reset_index(drop=True, inplace=True)
 
-                slicefile = Path(outfolder, 'Slice_%s_P%03d' % (orient, plane))
-                vstatp.to_csv(slicefile.with_suffix('.csv'), index=False)
-
                 rad = vstatp['R'].to_numpy()
                 theta = vstatp['Angular position (deg)'].to_numpy()
-
                 pts = np.vstack([theta, rad]).T
-
-                # Create interpolation grid
-                Rad = np.unique(rad)
-                Theta = np.unique(theta)
-                ic(Rad, Theta)
-                ic(len(Rad), len(Theta))
-
-                X = np.linspace(Theta.min(), Theta.max(), len(Theta)*2)
-                Y = np.linspace(Rad.min(), Rad.max(), len(Rad)*2)
-
-                # X = theta
-                # Y = rad
-                Xi, Yi = np.meshgrid(X, Y)
-                xi = Xi.flatten()
-                yi = Yi.flatten()
-                Pts = np.vstack([xi, yi]).T
-
-                vstatpi = pd.DataFrame()
-                vstatpi['R'] = yi
-                vstatpi['Y'] = yi # * np.cos(np.deg2rad(xi))
-                vstatpi['Z'] = yi # * np.sin(np.deg2rad(xi))
-                vstatpi['X'] = Xp
-
-                # Use original grid
-                Pts = pts
-                vstatpi = vstatp.copy()
 
                 for i in [1, 2]:
                     if orient in ['Up', 'Down']:
@@ -669,9 +639,9 @@ def Slice(nx=10, ny=10, verbose=False):
                     vs = 'RMS %s velocity (%s)' % (comp, orient)
                     Var = [[f'Ch. {i} samples', vn], [f'Ch. {i} mean', vm], [f'Ch. {i} sdev', vs]]
                     for var in Var:
-                        ch, name = var
+                        chi, cho = var
 
-                        v = vstatp[ch].to_numpy()
+                        v = vstatp[chi].to_numpy()
                         np.nan_to_num(v, copy=False)
                         cond = ~np.isnan(v)
                         # ic(np.count_nonzero(cond))
@@ -680,26 +650,23 @@ def Slice(nx=10, ny=10, verbose=False):
                         # ic(ch, len(v))
 
                         interp = RBFInterpolator(pts, v,
-                                                 smoothing=1,
+                                                 smoothing=0.01,
                                                  kernel=settings['Interpolation'])
-                        # ic(interp.kernel)
+                        ic(interp.kernel)
 
-                        V = interp(Pts)
+                        V = interp(pts)
                         # ic(V.shape)
 
-                        if i == 1 and var[0] == 'Ch. 1 samples':
-                            vstatpi[name] = V.T
-                        else:
-                            vstatpi = pd.concat([vstatpi, pd.DataFrame({name: V.T})], axis=1)
-                        # ic(vstatpi[name])
+                        vstatp[cho] = V.T
+                        # ic(vstatp[name])
 
                 if plane == 0:
-                    vstats[orient] = vstatpi.copy()
+                    vstats[orient] = vstatp.copy()
                 else:
-                    vstats[orient] = pd.concat([vstats[orient], vstatpi], ignore_index=True)
+                    vstats[orient] = pd.concat([vstats[orient], vstatp], ignore_index=True)
 
-                slicefile = Path(outfolder, 'Slice_%s_Interp_P%03d' % (orient, plane))
-                vstatpi.to_csv(slicefile.with_suffix('.csv'), index=False)
+                slicefile = Path(outfolder, 'Slice_%s_P%03d' % (orient, plane))
+                vstatp.to_csv(slicefile.with_suffix('.csv'), index=False)
 
             if len(vstats[orient]) == 0:
                 vstats.pop(orient)
@@ -738,7 +705,9 @@ def Slice(nx=10, ny=10, verbose=False):
 
                 angle = np.median(slice['Angular position (deg)'].to_numpy())
                 angle_s = np.std(slice['Angular position (deg)'].to_numpy())
-                # ic(angle, angle_s, len(slice))
+                if angle_s > 1.0:
+                    print('Angle std > 1.0 for %s (%s)' % (orient, interval))
+                    continue
 
                 cos = np.cos(np.deg2rad(angle))
                 sin = np.sin(np.deg2rad(angle))
@@ -746,9 +715,6 @@ def Slice(nx=10, ny=10, verbose=False):
                 r = slice['R'].to_numpy()
                 pts = np.vstack([x, r]).T
 
-                #slice['X'] = x
-                #slice['Y'] = r*cos
-                #slice['Z'] = r*sin
                 if interval == Intervals[0]:
                     slice.to_csv(Path(outfolder, 'Slice_%s.csv' % orient), index=False)
 
@@ -772,11 +738,10 @@ def Slice(nx=10, ny=10, verbose=False):
                     vn = 'Count %s velocity (%s)' % (comp, orient)
                     vm = 'Mean %s velocity (%s)' % (comp, orient)
                     vs = 'RMS %s velocity (%s)' % (comp, orient)
-                    Var = [[f'Ch. {i} samples', vn], [f'Ch. {i} mean', vm], [f'Ch. {i} sdev', vs]]
+                    Var = [vn, vm, vs]
                     for var in Var:
-                        ch, name = var
 
-                        v = slice[ch].to_numpy()
+                        v = slice[var].to_numpy()
                         np.nan_to_num(v, copy=False)
                         cond = ~np.isnan(v)
                         # ic(np.count_nonzero(cond))
@@ -792,7 +757,7 @@ def Slice(nx=10, ny=10, verbose=False):
                         V = interp(Pts)
                         # ic(V.shape)
 
-                        Slice[name] = V.T
+                        Slice[var] = V.T
                         # ic(Slice)
 
             Slice['Velocity magnitude (Up)'] = np.sqrt(
@@ -849,9 +814,15 @@ def Slice(nx=10, ny=10, verbose=False):
             #     Vol['Z'] = Vol['R']*sin
             #     Slice = pd.concat([Slice, Vol], ignore_index=True)
 
-            Slice.sort_values(by=['X', 'R', 'Angular position (deg)'], inplace=True)
-            slicefile = Path(outfolder, 'Slice_A%03d' % int(angle))
-            Slice.to_csv(slicefile.with_suffix('.csv'), index=False)
+            # Slice.sort_values(by=['R', 'Angular position (deg)', 'X'], inplace=True)
+            # Slice.reset_index(drop=True, inplace=True)
+            if interval == Intervals[0]:
+                Vol = Slice.copy()
+            else:
+                Vol = pd.concat([Vol, Slice], ignore_index=True)
+
+        outfile = Path(outfolder, 'Vol')
+        Vol.to_csv(outfile.with_suffix('.csv'), index=False)
 
             # Pts = np.vstack([xi, yi]).T
             # tri = Delaunay(Pts)
