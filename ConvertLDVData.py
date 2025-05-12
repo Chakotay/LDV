@@ -20,8 +20,7 @@ from scipy.spatial import Delaunay
 
 import scipy.cluster.hierarchy as shc
 from sklearn.cluster import AgglomerativeClustering
-from vtk import VTK_TRIANGLE, vtkDoubleArray, vtkPoints
-from vtk import vtkUnstructuredGrid, vtkXMLUnstructuredGridWriter
+import vtk
 import vtkmodules.util.data_model
 import vtkmodules.util.execution_model
 
@@ -38,6 +37,7 @@ import timeit
 from icecream import ic
 from textwrap import dedent
 
+import pyvista as pv
 
 # %% [Graphical setup]
 # %matplotlib qt
@@ -297,65 +297,6 @@ def SetIntervals(period, step, width_left, width_right):
     return (intervals, centers)
 
 
-# %% [VTU export]
-def MakeVtkDataset(tri, z):
-    """
-    Creates a VTK unstructured grid dataset from a Delaunay triangulation and a specified z-coordinate.
-    Parameters:
-    tri (scipy.spatial.Delaunay): A Delaunay triangulation object containing points and simplices.
-    z (float): The z-coordinate to be assigned to all points in the dataset.
-    Returns:
-    vtkUnstructuredGrid: A VTK unstructured grid dataset with the specified points and triangles.
-    """
-
-    vtk_dataset = vtkUnstructuredGrid()
-    pts = vtkPoints()
-    for id, pt in enumerate(tri.points):
-        ic(id, pt)
-        x, y = pt
-        pts.InsertPoint(id, [x, y, z[id]])
-    vtk_dataset.SetPoints(pts)
-
-    vtk_dataset.Allocate(tri.nsimplex)
-    for point_ids in tri.simplices:
-        vtk_dataset.InsertNextCell(VTK_TRIANGLE, 3, point_ids)
-
-    return vtk_dataset
-
-
-def AddArray(vtk_dataset, name, data, cnames):
-    """
-    Adds a named array to a VTK dataset.
-    Parameters:
-    vtk_dataset (vtk.vtkDataSet): The VTK dataset to which the array will be added.
-    name (str): The name of the array to be added.
-    data (list or numpy.ndarray): The data to be added to the array. Should be a list or array of values.
-    cnames (list of str): The names of the components in the array.
-    Returns:
-    vtk.vtkDataSet: The VTK dataset with the added array.
-    """
-
-    npoints = vtk_dataset.GetNumberOfPoints()
-    ndata = len(data)
-
-    # ic(vtk_dataset.GetNumberOfPoints())
-    array = vtkDoubleArray()
-    array.SetName(name)
-    array.SetNumberOfComponents(ndata)
-    for i, cname in enumerate(cnames):
-        array.SetComponentName(i, cname)
-
-    array.SetNumberOfTuples(npoints)
-    dat = np.dstack((data)).reshape(npoints, ndata)
-    # print(dat)
-    for i, val in enumerate(dat):
-        # print(val)
-        array.SetTuple(i, val)
-    vtk_dataset.GetPointData().AddArray(array)
-
-    return vtk_dataset
-
-
 def ExportToVTKVtu(block, plane, orientation, X):
     """
     Exports data to a VTK (.vtu) file format.
@@ -441,124 +382,17 @@ def ExportToVTKVtu(block, plane, orientation, X):
     writer.Write()
 
 
-def BuildBlocks(radii, ctrs, orientation, vstats, verbose=False):
-    """
-    BuildBlocks constructs and returns a set of data blocks for given radii, centers, and statistics.
-    Parameters:
-    radii (numpy.ndarray): Array of radii values.
-    ctrs (numpy.ndarray): Array of center values.
-    vstats (dict): Dictionary containing statistical data with keys 'Ch. 1 samples', 'Ch. 1 mean', 'Ch. 1 sdev',
-                   'Ch. 2 samples', 'Ch. 2 mean', 'Ch. 2 sdev'.
-    verbose (bool, optional): If True, displays the vstats dictionary. Default is False.
-    Returns:
-    list: A list containing:
-        - theta (numpy.ndarray): 2D array of angular positions in radians.
-        - rad (numpy.ndarray): 2D array of radial positions.
-        - Vn (numpy.ndarray): 3D array of sample counts.
-        - Vm (numpy.ndarray): 3D array of mean values.
-        - Vs (numpy.ndarray): 3D array of standard deviation values.
-    """
+def Slice(Planes, dir, datafolder, outfolder, sw, nx=10, ny=10, verbose=False):
 
-    if verbose:
-        print('BuildBlocks:', orientation)
-        ic(vstats)
-    src1 = ['Ch. 1 samples', 'Ch. 1 mean', 'Ch. 1 sdev']
-    src2 = ['Ch. 2 samples', 'Ch. 2 mean', 'Ch. 2 sdev']
-    Src = [src1, src2]
-
-    Vn = []
-    Vm = []
-    Vs = []
-    for src in Src:
-        # vn,vm,vs=Collect(vstats,src)
-        vn = np.asarray(vstats[src[0]], dtype=float)
-        vm = np.asarray(vstats[src[1]], dtype=float)
-        vs = np.asarray(vstats[src[2]], dtype=float)
-        Vn = np.append(Vn, vn)
-        Vm = np.append(Vm, vm)
-        Vs = np.append(Vs, vs)
-    Vn = np.reshape(Vn, (len(Src), radii.size, ctrs.size))
-    Vm = np.reshape(Vm, (len(Src), radii.size, ctrs.size))
-    Vs = np.reshape(Vs, (len(Src), radii.size, ctrs.size))
-
-    reps = int(360/settings['Period'])
-    angle = []
-    for i in range(reps):
-        angle = np.append(angle, ctrs+settings['Period']*i)
-    Vn = np.tile(Vn, (1, 1, reps))
-    Vm = np.tile(Vm, (1, 1, reps))
-    Vs = np.tile(Vs, (1, 1, reps))
-
-    Vn = np.dstack((Vn, Vn[:, :, 0]))
-    Vm = np.dstack((Vm, Vm[:, :, 0]))
-    Vs = np.dstack((Vs, Vs[:, :, 0]))
-    angle = np.append(angle, [360])
-
-    offset = 0.0
-    if orientation == 'Vu':
-        offset = settings['VerticalUpPhaseOffset']
-    if orientation == 'Vd':
-        offset = settings['VerticalDownPhaseOffset']
-    if orientation == 'Hl':
-        offset = settings['HorizontalLeftPhaseOffset']
-    if orientation == 'Hr':
-        offset = settings['HorizontalRightPhaseOffset']
-    # print(orientation,offset)
-    angle = np.mod(angle+offset, 360)
-    angle = np.deg2rad(angle)
-
-    theta, rad = np.meshgrid(angle, radii)
-
-    return [theta, rad, Vn, Vm, Vs]
-
-
-def Slice(nx=10, ny=10, verbose=False):
-
-    DataPath = Path(settings['OutFolder'], '%s_Stats5.fth' % settings['Case'])
-    if not DataPath.exists():
-        print('%s does not exist' % DataPath)
-        sys.exit(0)
-
-    Data = pd.read_feather(DataPath)
-    # display(Data)
-
-    sw = 'S%04dW%04d' % (settings['Step']*100, settings['Wslot']*100)
-    datafolder = Path(settings['OutFolder'], 'PolarStats', sw, 'Csv')
-    outfolder = Path(datafolder, 'Slice')
-    outfolder.mkdir(exist_ok=True)
     # Statfile = [item for item in datafolder.iterdir()]
     # print(Statfile)
 
-    Planes = settings['PlaneRange']
-    if Planes == [-1]:
-        seen = set()
-        Planes = []
-        for x in Data['Plane']:
-            if x not in seen:
-                Planes.append(x)
-                seen.add(x)
-
-        Planes.sort()
-
-    print("%d planes:" % len(Planes), Planes)
-
     Intervals, Ctrs = SetIntervals(settings['Period'], settings['Step'],
                                    settings['Wleft'], settings['Wright'])
-    vstat0 = pd.DataFrame([], columns=['Slot', 'Angular position (deg)',
-                                       'R', 'X',
-                                       'Ch. 1 samples', 'Ch. 1 mean', 'Ch. 1 sdev',
-                                       'Ch. 2 samples', 'Ch. 2 mean', 'Ch. 2 sdev'])
-    vstat0['Slot'] = Intervals
-    vstat0['Angular position (deg)'] = Intervals.left+settings['Wleft']
-    vstat0['R'] = np.nan
-    vstat0['X'] = np.nan
-    vstat0['Ch. 1 samples'] = vstat0['Ch. 2 samples'] = np.nan
-    vstat0['Ch. 1 mean'] = vstat0['Ch. 2 mean'] = np.nan
-    vstat0['Ch. 1 sdev'] = vstat0['Ch. 2 sdev'] = np.nan
-
     ic(Ctrs)
     reps = int(360/settings['Period'])
     ic(reps)
+
     with tqdm(total=len(Planes), dynamic_ncols=True) as pbar:
         vstats = {}
         for orientation in ['Vu', 'Vd', 'Hl', 'Hr']:
@@ -573,13 +407,13 @@ def Slice(nx=10, ny=10, verbose=False):
 
             cond0 = (Data['Orientation'] == orientation)
             cond1 = (Data['R (mm)'] > 0.0)
-            for plane in Planes[:5:]:
+            for plane in Planes['id'][::]:
 
                 cond2 = (Data['Plane'] == plane)
                 data = Data[cond0 & cond1 & cond2].copy()
                 if len(data) == 0:
                     continue
-                ic(orient, len(Data[cond0 & cond1]), len(Data[cond0 & cond1 & cond2]))
+                # ic(orient, len(Data[cond0 & cond1]), len(Data[cond0 & cond1 & cond2]))
 
                 count = 0
                 data.reset_index(drop=True, inplace=True)
@@ -617,7 +451,7 @@ def Slice(nx=10, ny=10, verbose=False):
 
                 if count < len(data):
                     print('%d of %d points missing for %s (%s) in plane %d' % (len(data)-count, len(data), orient, orientation, plane))
-                ic(orient, plane, len(data), count)
+                ic(dir.name, orient, plane, len(data), count)
 
                 vstatp['Y'] = vstatp['R'] * np.cos(np.deg2rad(vstatp['Angular position (deg)']))
                 vstatp['Z'] = vstatp['R'] * np.sin(np.deg2rad(vstatp['Angular position (deg)']))
@@ -634,6 +468,7 @@ def Slice(nx=10, ny=10, verbose=False):
                     else:
                         comp = 'tangential' if i == 1 else 'axial'
 
+                    # ic(plane, comp)
                     vn = 'Count %s velocity (%s)' % (comp, orient)
                     vm = 'Mean %s velocity (%s)' % (comp, orient)
                     vs = 'RMS %s velocity (%s)' % (comp, orient)
@@ -642,22 +477,20 @@ def Slice(nx=10, ny=10, verbose=False):
                         chi, cho = var
 
                         v = vstatp[chi].to_numpy()
-                        np.nan_to_num(v, copy=False)
+                        # np.nan_to_num(v, copy=False)
                         cond = ~np.isnan(v)
-                        # ic(np.count_nonzero(cond))
-                        pts = pts[cond]
-                        v = v[cond]
+                        # ic(cho, np.count_nonzero(cond))
                         # ic(ch, len(v))
 
-                        interp = RBFInterpolator(pts, v,
-                                                 smoothing=0.01,
+                        interp = RBFInterpolator(pts[cond], v[cond],
+                                                 smoothing=0.05,
                                                  kernel=settings['Interpolation'])
-                        ic(interp.kernel)
+                        # ic(interp.kernel)
 
-                        V = interp(pts)
+                        V = interp(pts[cond])
                         # ic(V.shape)
 
-                        vstatp[cho] = V.T
+                        vstatp.loc[cond, cho] = V.T
                         # ic(vstatp[name])
 
                 if plane == 0:
@@ -671,12 +504,12 @@ def Slice(nx=10, ny=10, verbose=False):
             if len(vstats[orient]) == 0:
                 vstats.pop(orient)
                 continue
-            ic(plane, vstats[orient], vstats.keys())
+            ic(vstats[orient], vstats.keys())
 
         xmin = ymin = 1e6
         xmax = ymax = -1e6
         for orient in vstats.keys():
-            ic(orient, len(vstats[orient]))
+            # ic(orient, len(vstats[orient]))
             if xmin > vstats[orient]['X'].min():
                 xmin = vstats[orient]['X'].min()
             if xmax < vstats[orient]['X'].max():
@@ -728,6 +561,7 @@ def Slice(nx=10, ny=10, verbose=False):
                     Slice['Angular position (deg)'] = angle
                     Slice['R'] = np.sqrt(Slice['Y']**2 + Slice['Z']**2)
                     new_slice = False
+                    # ic(len(Slice), len(slice), len(Pts))
 
                 for i in [1, 2]:
                     if orient in ['Up', 'Down']:
@@ -742,22 +576,19 @@ def Slice(nx=10, ny=10, verbose=False):
                     for var in Var:
 
                         v = slice[var].to_numpy()
-                        np.nan_to_num(v, copy=False)
+                        # np.nan_to_num(v, copy=False)
                         cond = ~np.isnan(v)
-                        # ic(np.count_nonzero(cond))
-                        pts = pts[cond]
-                        v = v[cond]
-                        # ic(ch, len(v))
+                        # ic(var, np.count_nonzero(cond))
 
-                        interp = RBFInterpolator(pts, v,
+                        interp = RBFInterpolator(pts[cond], v[cond],
                                                  smoothing=0.0,
                                                  kernel=settings['Interpolation'])
                         # ic(interp.kernel)
 
                         V = interp(Pts)
-                        # ic(V.shape)
+                        # ic(Pts.shape, V.shape)
 
-                        Slice[var] = V.T
+                        Slice = pd.concat([Slice, pd.DataFrame({var: V.T})], axis=1)
                         # ic(Slice)
 
             Slice['Velocity magnitude (Up)'] = np.sqrt(
@@ -804,55 +635,137 @@ def Slice(nx=10, ny=10, verbose=False):
                 Slice['RMS radial velocity (Up)']**2 +
                 Slice['RMS tangential velocity (Left)']**2)/2
 
-            # Vol = Slice.copy()
-            # ic(Vol['Angular position (deg)'])
-            # for rep in np.arange(1, reps):
-            #     rot = Vol['Angular position (deg)'] + settings['Period']*rep
-            #     cos = np.cos(np.deg2rad(rot))
-            #     sin = np.sin(np.deg2rad(rot))
-            #     Vol['Y'] = Vol['R']*cos
-            #     Vol['Z'] = Vol['R']*sin
-            #     Slice = pd.concat([Slice, Vol], ignore_index=True)
-
-            # Slice.sort_values(by=['R', 'Angular position (deg)', 'X'], inplace=True)
-            # Slice.reset_index(drop=True, inplace=True)
             if interval == Intervals[0]:
                 Vol = Slice.copy()
             else:
                 Vol = pd.concat([Vol, Slice], ignore_index=True)
 
-        outfile = Path(outfolder, 'Vol')
-        Vol.to_csv(outfile.with_suffix('.csv'), index=False)
+        vol = Vol.copy()
+        ic(Vol['Angular position (deg)'])
+        for rep in np.arange(1, reps):
+            rot = vol['Angular position (deg)'] + settings['Period']
+            cos = np.cos(np.deg2rad(rot))
+            sin = np.sin(np.deg2rad(rot))
+            vol['Angular position (deg)'] = rot
+            vol['Y'] = vol['R']*cos
+            vol['Z'] = vol['R']*sin
+            Vol = pd.concat([Vol, vol], ignore_index=True)
 
-            # Pts = np.vstack([xi, yi]).T
-            # tri = Delaunay(Pts)
-            # Z = Slice['Z'].to_numpy()
-            # vtk_dataset = MakeVtkDataset(tri, Slice['Z'].to_numpy().T)
-            # ic(vtk_dataset.GetNumberOfPoints())
-            # axial = [var for var in Slice.columns if 'axial velocity' in var.lower()]
-            # radial = [var for var in Slice.columns if 'radial velocity' in var.lower()]
-            # tangential = [var for var in Slice.columns if 'tangential velocity' in var.lower()]
-            # magnitude = [var for var in Slice.columns if 'velocity magnitude' in var.lower()]
-            # vorticity = [var for var in Slice.columns if 'vorticity' in var.lower()]
-            # turbulence = [var for var in Slice.columns if 'tke' in var.lower()]
-            # Var = [[axial, 'Axial velocity'],
-            #        [radial, 'Radial velocity'],
-            #        [tangential, 'Tangential velocity'],
-            #        [magnitude, 'Velocity magnitude'],
-            #        [vorticity, 'Vorticity'],
-            #        [turbulence, 'TKE']]
-            # for var in Var:
-            #     cnames, lbl = var
-            #     vtk_dataset = AddArray(vtk_dataset, lbl,
-            #                            [slice for slice in Slice[cnames].to_numpy().T], cnames)
-            # writer = vtkXMLUnstructuredGridWriter()
-            # writer.SetFileName(slicefile.with_suffix('.vtu'))
-            # writer.SetInputData(vtk_dataset)
-            # writer.Write()
+        X = Vol['X'].to_numpy().flatten()
+        x = np.unique(X)
+        zeros = np.zeros(len(x))
+        Zero = pd.DataFrame([x, zeros, zeros]).T
+        Zero.columns = ['X', 'Y', 'Z']
+        Vol = pd.concat([Vol, Zero])
 
-            # Block = BuildBlocks(vstats['R'].to_numpy(), ctr, orientation, vstats, verbose=verbose)
-            # ExportToVTKVtu(Block, row['Plane'], orientation, X)
+        return Vol
 
+
+# %% [VTU export]
+def CreateVtkDataset(Vol, volvtu):
+    """
+    Creates a VTK unstructured grid dataset from a Delaunay triangulation and a specified z-coordinate.
+    Parameters:
+    tri (scipy.spatial.Delaunay): A Delaunay triangulation object containing points and simplices.
+    z (float): The z-coordinate to be assigned to all points in the dataset.
+    Returns:
+    vtkUnstructuredGrid: A VTK unstructured grid dataset with the specified points and triangles.
+    """
+
+    Vol.sort_values(by=['X', 'R', 'Angular position (deg)'], inplace=True)
+    # Vol = Vol.sample(frac=1.0, random_state=1, ignore_index=True)
+    Vol.reset_index(drop=True, inplace=True)
+
+    X = Vol['X'].to_numpy().flatten()
+    Y = Vol['Y'].to_numpy().flatten()
+    Z = Vol['Z'].to_numpy().flatten()
+    pts = list(np.vstack([X, Y, Z]).T)
+
+    points = vtk.vtkPoints()
+    for id, pt in enumerate(pts):
+        x, y, z = pt
+        x = x + np.random.rand()/1e3
+
+        points.InsertPoint(id, [x, y, z])
+
+    vtk_dataset = vtk.vtkUnstructuredGrid()
+    vtk_dataset.SetPoints(points)
+
+    axial = [var for var in Vol.columns if 'axial velocity' in var.lower()]
+    radial = [var for var in Vol.columns if 'radial velocity' in var.lower()]
+    tangential = [var for var in Vol.columns if 'tangential velocity' in var.lower()]
+    magnitude = [var for var in Vol.columns if 'velocity magnitude' in var.lower()]
+    vorticity = [var for var in Vol.columns if 'vorticity' in var.lower()]
+    turbulence = [var for var in Vol.columns if 'tke' in var.lower()]
+    Var = [[axial, 'Axial velocity'],
+           [radial, 'Radial velocity'],
+           [tangential, 'Tangential velocity'],
+           [magnitude, 'Velocity magnitude'],
+           [vorticity, 'Vorticity'],
+           [turbulence, 'TKE']]
+    for var in Var:
+        cnames, lbl = var
+        ic(len(Vol[cnames[0]]))
+        V = []
+        for cname in cnames:
+            vol = Vol[cname].to_numpy().flatten()
+            ic(len(vol), vol)
+            if cname == cnames[0]:
+                V = [vol]
+            else:
+                V.append(vol)
+            ic(len(V), V)
+        vtk_dataset = AddArray(vtk_dataset, lbl, V, cnames)
+
+    # tri = Delaunay(pts, qhull_options='QJ')
+    # ic(tri)
+    # vtk_dataset.Allocate(tri.nsimplex)
+    # for point_ids in tri.simplices:
+    #     vtk_dataset.InsertNextCell(vtk.VTK_TRIANGLE, 4, point_ids)
+
+    delaunay = vtk.vtkDelaunay3D()
+    delaunay.SetInputData(vtk_dataset)
+    delaunay.Update()
+
+    writer = vtk.vtkXMLUnstructuredGridWriter()
+    writer.SetFileName(volvtu)
+    writer.SetInputConnection(delaunay.GetOutputPort())
+    # writer.SetInputData(vtk_dataset)
+    writer.Write()
+
+
+def AddArray(vtk_dataset, name, data, cnames):
+    """
+    Adds a named array to a VTK dataset.
+    Parameters:
+    vtk_dataset (vtk.vtkDataSet): The VTK dataset to which the array will be added.
+    name (str): The name of the array to be added.
+    data (list or numpy.ndarray): The data to be added to the array. Should be a list or array of values.
+    cnames (list of str): The names of the components in the array.
+    Returns:
+    vtk.vtkDataSet: The VTK dataset with the added array.
+    """
+
+    npoints = vtk_dataset.GetNumberOfPoints()
+    ndata = len(data)
+
+    ic(vtk_dataset.GetNumberOfPoints())
+    array = vtk.vtkDoubleArray()
+    array.SetName(name)
+    array.SetNumberOfComponents(ndata)
+    ic(array.GetNumberOfComponents())
+    for i, cname in enumerate(cnames):
+        array.SetComponentName(i, cname)
+
+    array.SetNumberOfTuples(npoints)
+    dat = np.dstack((data)).reshape(npoints, ndata)
+    # print(dat)
+    for i, val in enumerate(dat):
+        # print(val)
+        array.SetTuple(i, val)
+    vtk_dataset.GetPointData().AddArray(array)
+
+    return vtk_dataset
 
 # %% [Main]
 args = [arg for arg in sys.argv[1:] if not arg.startswith('-')]
@@ -869,4 +782,52 @@ global settings
 settings = RunSettings(settings_filename)
 # display(settings)
 
-Slice(nx, ny, settings['Verbose'])
+SourceFolder = Path(settings['RootPath'], settings['OutputPath']).parent
+ic(SourceFolder)
+volfolder = Path(SourceFolder, 'Volume')
+volfolder.mkdir(exist_ok=True)
+
+dirs = [item for item in SourceFolder.iterdir() if item.is_dir() and '-' in item.name]
+dirs = sorted(dirs, key=lambda x: int((x.name).split('-')[1]))
+
+DataPath = Path(settings['OutFolder'], '%s_Stats5.fth' % settings['Case'])
+if not DataPath.exists():
+    print('%s does not exist' % DataPath)
+    sys.exit(0)
+
+Data = pd.read_feather(DataPath)
+# display(Data)
+seen = set()
+Planes = pd.DataFrame(columns=['id', 'x'])
+for x in Data['Plane']:
+    if x not in seen:
+        xp = Data.loc[Data['Plane'] == x, 'X (mm)'].mean()
+        Planes.loc[len(Planes)] = {'id': x, 'x': xp}
+        seen.add(x)
+Planes = Planes[:5]
+Planes.sort_values(by=['x'], ascending=False, inplace=True)
+Planes.reset_index(drop=True, inplace=True)
+
+ic("%d planes:" % len(Planes), Planes)
+
+sw = 'S%04dW%04d' % (settings['Step']*100, settings['Wslot']*100)
+with tqdm(total=len(dirs), dynamic_ncols=True, desc=dirs[0].name) as pbar:
+    for dir in dirs[::]:
+        pbar.desc = dir.name
+        pbar.update(1)
+
+        datafolder = Path(dir, settings['Case'], 'PolarStats', sw, 'Csv')
+        ic(datafolder)
+        outfolder = Path(datafolder, 'Slice')
+        outfolder.mkdir(exist_ok=True)
+
+        volfile = Path(volfolder, 'Vol-%s' % dir.name)
+        volcsv = Path(volfile.with_suffix('.csv'))
+        if not volcsv.exists():
+            Vol = Slice(Planes, dir, datafolder, outfolder, sw, nx, ny, settings['Verbose'])
+            Vol.to_csv(volcsv, index=False)
+        else:
+            Vol = pd.read_csv(volcsv)
+
+        volvtu = Path(volfile.with_suffix('.vtu'))
+        CreateVtkDataset(Vol, volvtu)

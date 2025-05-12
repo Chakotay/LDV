@@ -25,6 +25,7 @@ import scipy.cluster.hierarchy as shc
 from sklearn.cluster import AgglomerativeClustering
 from vtk import VTK_TRIANGLE, vtkDoubleArray, vtkPoints
 from vtk import vtkUnstructuredGrid, vtkXMLUnstructuredGridWriter
+from vtk import vtkMultiBlockDataSet, vtkXMLMultiBlockDataWriter
 import vtkmodules.util.data_model
 import vtkmodules.util.execution_model
 
@@ -178,6 +179,7 @@ def SetupLDV(f):
     Vt_mean_range;[-1.5, 1.5];Polar plot range (Vt mean)
     Vt_sdev_range;[0.0, 0.5];Polar plot range (Vt rms)
     Interpolation;thin_plate_spline;linear/thin_plate_spline/cubic/quintic/gaussian/none
+    Smoothing;0.0;Smoothing factor for interpolation
 
     ### Execution output setup
     Verbose;False;Verbose output
@@ -261,7 +263,7 @@ def RunSettings(filename):
     Values = ['Rref', 'nStd', 'Period', 'Step', 'Wleft', 'Wright',
               'VerticalUpPhaseOffset', 'VerticalDownPhaseOffset',
               'HorizontalLeftPhaseOffset', 'HorizontalRightPhaseOffset',
-              'RefractiveIndexCorrection']
+            'RefractiveIndexCorrection', 'Smoothing']
     for value in Values:
         Settings.at[value, 'Value'] = float(Settings.at[value, 'Value'])
 
@@ -1730,7 +1732,7 @@ def AddArray(vtk_dataset, name, data, cnames):
     return vtk_dataset
 
 
-def ExportToVTKVtu(block, plane, orientation, X):
+def ExportToVTKVtm(vtk_block, iorient, block, plane, orientation, sw, X):
     """
     Exports data to a VTK (.vtu) file format.
     Parameters:
@@ -1749,7 +1751,6 @@ def ExportToVTKVtu(block, plane, orientation, X):
     7. Writes the VTK dataset to a .vtu file.
     """
 
-    sw = 'S%04dW%04d' % (settings['Step']*100, settings['Wslot']*100)
     outfolder = Path(settings['OutFolder'], 'PolarStats', sw, 'Vtk')
     outfolder.mkdir(exist_ok=True)
 
@@ -1759,11 +1760,102 @@ def ExportToVTKVtu(block, plane, orientation, X):
 
     x = rad * np.cos(theta)
     y = rad * np.sin(theta)
-    # z = np.full((x.shape[0], x.shape[1]), Z)
     points = np.vstack([x.flatten(), y.flatten()]).T
-    points = np.vstack((points, (0, 0)))
+    R = np.sqrt(points[:, 0]**2 + points[:, 1]**2)
 
-    tri = Delaunay(points)
+    orientation = ('Up' if orientation == 'Vu' else 'Down' if orientation == 'Vd' else
+                   'Left' if orientation == 'Hl' else 'Right')
+    Lbl = ['Radial velocity (%s)' % orientation, 'Axial velocity (%s)' % orientation]
+    if orientation in ['Left', 'Right']:
+        Lbl = ['Tangential velocity (%s)' % orientation, 'Axial velocity (%s)' % orientation]
+
+    for k, lbl in enumerate(Lbl):
+
+        V = [Vn[k, :, :], Vm[k, :, :], Vs[k, :, :]]
+
+        Pts = points.copy()
+        if orientation in ['Left', 'Right']:
+            Pts = Pts*settings['RefractiveIndexCorrection']
+        Points = np.vstack((Pts, (0, 0)))
+        tri = Delaunay(Points)
+        vtk_dataset = MakeVtkDataset(tri, Z)
+
+        r = np.sqrt(Pts[:, 0]**2 + Pts[:, 1]**2)
+        Rmin = r.min()
+        Rmax = r.max()
+        ic(Rmin, Rmax)
+
+        kernel = settings['Interpolation']
+        ic(kernel)
+        ic(settings['Smoothing'])
+        for i in range(3):
+
+            ic(lbl, i)
+            v = V[i].flatten()
+            if kernel == 'none':
+                V[i] = v.copy()
+            else:
+                cond = ~np.isnan(v)
+                pts = Pts[cond]
+                v = v[cond]
+
+                ic(v, len(v), pts, len(pts))
+                interp = RBFInterpolator(pts, v,
+                                         smoothing=settings['Smoothing'],
+                                         kernel=kernel)
+
+                V[i] = interp(points)
+
+            R = np.sqrt(points[:, 0]**2 + points[:, 1]**2)
+            cond = (R < Rmin) | (R > Rmax)
+            V[i][cond] = np.nan
+
+        for i in range(3):
+            V[i] = np.append(V[i], [0])
+
+        vtk_dataset = AddArray(vtk_dataset, lbl,
+                               [V[0], V[1], V[2]],
+                               ['Count', 'Mean', 'RMS'])
+
+    vtk_block.SetBlock(iorient, vtk_dataset)
+    vtk_block.GetMetaData(iorient).Set(vtkMultiBlockDataSet.NAME(), orientation)
+    
+    return vtk_block
+
+
+def ExportToVTKVtu(block, plane, orientation, sw, X):
+    """
+    Exports data to a VTK (.vtu) file format.
+    Parameters:
+    block (tuple): A tuple containing theta, rad, Vn, Vm, Vs arrays.
+    row (dict): A dictionary containing metadata for the current row, including 'Orientation' and 'Plane'.
+    X (float): A scalar value used for normalization.
+    Returns:
+    None
+    The function performs the following steps:
+    1. Constructs the output folder path based on settings.
+    2. Extracts and normalizes the radial and axial coordinates.
+    3. Creates a Delaunay triangulation of the points.
+    4. Determines the orientation and labels for the velocity components.
+    5. Interpolates the velocity data if the orientation is 'Left' or 'Right'.
+    6. Adds the velocity data arrays to the VTK dataset.
+    7. Writes the VTK dataset to a .vtu file.
+    """
+
+    outfolder = Path(settings['OutFolder'], 'PolarStats', sw, 'Vtk')
+    outfolder.mkdir(exist_ok=True)
+
+    theta, rad, Vn, Vm, Vs = block
+
+    Z = X / settings['Rref']
+
+    x = rad * np.cos(theta)
+    y = rad * np.sin(theta)
+    points = np.vstack([x.flatten(), y.flatten()]).T
+    R = np.sqrt(points[:, 0]**2 + points[:, 1]**2)
+
+    Points = np.vstack((points, (0, 0)))
+    tri = Delaunay(Points)
     vtk_dataset = MakeVtkDataset(tri, Z)
 
     orientation = ('Up' if orientation == 'Vu' else 'Down' if orientation == 'Vd' else
@@ -1777,32 +1869,42 @@ def ExportToVTKVtu(block, plane, orientation, X):
         V = [Vn[k, :, :], Vm[k, :, :], Vs[k, :, :]]
 
         # print('Interpolation:', settings['Interpolation'])
-        if settings['Interpolation'] != 'none' and orientation in ['Left', 'Right']:
-            fact = settings['RefractiveIndexCorrection']
-            kernel = settings['Interpolation']
-            # ic(kernel)
+        Pts = points.copy()
+        if orientation in ['Left', 'Right']:
+            Pts = Pts*settings['RefractiveIndexCorrection']
+        r = np.sqrt(Pts[:, 0]**2 + Pts[:, 1]**2)
+        Rmin = r.min()
+        Rmax = r.max()
+        # ic(Rmin, Rmax)
 
-            pts = np.vstack([rad.flatten()*fact, theta.flatten()]).T
-            Rmin = pts[:, 0].min()
-            Rmax = pts[:, 0].max()
-            for i in range(3):
+        kernel = settings['Interpolation']
+        # ic(kernel)
+        # ic(settings['Smoothing'])
+        for i in range(3):
 
-                v = V[i].flatten()
+            # ic(lbl, i)
+            v = V[i].flatten()
+            if kernel == 'none':
+                V[i] = v.copy()
+            else:
                 cond = ~np.isnan(v)
-                Pts = pts[cond]
+                pts = Pts[cond]
                 v = v[cond]
-                interp = RBFInterpolator(Pts, v,
-                                         smoothing=0.1,
+
+                # ic(v, len(v), pts, len(pts))
+                interp = RBFInterpolator(pts, v,
+                                         smoothing=settings['Smoothing'],
                                          kernel=kernel)
-                Pts = np.vstack([rad.flatten(), theta.flatten()]).T
 
-                V[i] = interp(Pts)
+                V[i] = interp(points)
 
-                cond = (Pts[:, 0] < Rmin) | (Pts[:, 0] > Rmax)
-                V[i][cond] = np.nan
+            R = np.sqrt(points[:, 0]**2 + points[:, 1]**2)
+            cond = (R < Rmin) | (R > Rmax)
+            # cond = (R < Rmin)
+            V[i][cond] = np.nan
 
         for i in range(3):
-            V[i] = np.append(V[i], [0])
+            V[i] = np.append(V[i], [np.nan])
 
         vtk_dataset = AddArray(vtk_dataset, lbl,
                                [V[0], V[1], V[2]],
@@ -1879,7 +1981,7 @@ def BuildBlocks(radii, ctrs, orientation, vstats, verbose=False):
         offset = settings['HorizontalRightPhaseOffset']
     # print(orientation,offset)
     angle = np.mod(angle+offset, 360)
-    angle = np.deg2rad(angle)
+    angle = np.deg2rad(angle)*settings['RotationSign']
 
     theta, rad = np.meshgrid(angle, radii)
 
@@ -1887,7 +1989,7 @@ def BuildBlocks(radii, ctrs, orientation, vstats, verbose=False):
 
 
 # %% [Polar plot)]
-def PlotVStatsPolar(block, plane, orientation, X, show=False):
+def PlotVStatsPolar(block, plane, orientation, sw, X, show=False):
     """
     Plots velocity statistics on a polar plot.
     Parameters:
@@ -1905,7 +2007,6 @@ def PlotVStatsPolar(block, plane, orientation, X, show=False):
 
     RadiusLimits = settings['PolarPlotRadiusLimits']
 
-    sw = 'S%04dW%04d' % (settings['Step']*100, settings['Wslot']*100)
     outfolder = Path(settings['OutFolder'], 'PolarStats', sw, 'Plots')
     outfolder.mkdir(exist_ok=True)
 
@@ -2047,7 +2148,7 @@ def PolarPlots(verbose=False, show=False):
 
     Intervals, Ctrs = SetIntervals(settings['Period'], settings['Step'],
                                    settings['Wleft'], settings['Wright'])
-    vstat0 = pd.DataFrame([], columns=['Slot',
+    vstat0 = pd.DataFrame([], columns=['Slot', 'Angular position (deg)',
                                        'Ch. 1 samples', 'Ch. 1 mean', 'Ch. 1 sdev',
                                        'Ch. 2 samples', 'Ch. 2 mean', 'Ch. 2 sdev'])
     vstat0['Slot'] = Intervals
@@ -2060,8 +2161,11 @@ def PolarPlots(verbose=False, show=False):
         for plane in Planes:
             cond0 = (Data['Plane'] == plane)
 
+            # vtk_block = vtkMultiBlockDataSet()
+            # vtk_block.SetNumberOfBlocks(2)
+
             start_time = timeit.default_timer()
-            for orientation in ['Vu', 'Vd', 'Hl', 'Hr']:
+            for iorient, orientation in enumerate(['Vu', 'Vd', 'Hl', 'Hr']):
                 cond1 = (Data['Orientation'] == orientation)
                 data = Data[cond0 & cond1].copy()
 
@@ -2077,10 +2181,11 @@ def PolarPlots(verbose=False, show=False):
                     print('Skipping plane %d (%s): R = %f' % (plane, orientation, np.mean(R)))
                     continue
                 # print('R:', len(R), data['Orientation'], data['Point'], len(data))
-                vstats = pd.DataFrame([], columns=['Slot',
+                vstats = pd.DataFrame([], columns=['Slot', 'Angular position (deg)',
                                                    'Ch. 1 samples', 'Ch. 1 mean', 'Ch. 1 sdev',
                                                    'Ch. 2 samples', 'Ch. 2 mean', 'Ch. 2 sdev'])
                 count = 0
+                data.reset_index(drop=True, inplace=True)
                 for irow, row in data.iterrows():
                     plane = row['Plane']
 
@@ -2110,8 +2215,17 @@ def PolarPlots(verbose=False, show=False):
                     print('%d of %d points missing in plane %d for %s' % (len(data)-count, len(data),
                                                                           plane, orientation))
                 Block = BuildBlocks(R, Ctrs, orientation, vstats, verbose=verbose)
-                PlotVStatsPolar(Block, plane, orientation, X, show)
-                ExportToVTKVtu(Block, plane, orientation, X)
+                PlotVStatsPolar(Block, plane, orientation, sw, X, show)
+                ExportToVTKVtu(Block, plane, orientation, sw, X)
+
+                # vtk_block = ExportToVTKVtm(vtk_block, iorient, Block, plane, orientation, sw, X)
+
+            # writer = vtkXMLMultiBlockDataWriter()
+            # outfolder = Path(settings['OutFolder'], 'PolarStats', sw, 'Vtk')
+            # outfile = '%s_Stats_%s_P%02d' % (settings['Case'], sw, plane)
+            # writer.SetFileName(Path(outfolder, outfile).with_suffix('.vtm'))
+            # writer.SetInputData(vtk_block)
+            # writer.Write()
 
             if verbose:
                 print('Plane %02d: %f seconds' % (plane, timeit.default_timer() - start_time))
