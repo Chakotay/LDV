@@ -140,6 +140,7 @@ def SetupLDV(f):
     OutputPath;'Analysis/CRP1_LDV';Output path
     Case;'unified-data';Case
     Rref;109.355;Reference radius in mm
+    RefractiveIndexCorrection;0.9Refractive index correction (1.0 for no correction)
 
     ### Generation of database
     GenerateDatabase;False;True to generate database
@@ -162,7 +163,6 @@ def SetupLDV(f):
     ### Plot generation setup
     GeneratePolarPlots;True;True to generate polar plots
     RotationSign;-1;Rotation sign (-1,+1)
-    RefractiveIndexCorrection;0.98;Refractive index correction (1.0 for no correction)
     PolarPlotRadiusLimits;[0.2, 1.25];Radius limits for polar plots
     VerticalUpPhaseOffset;0.0;Phase offset for vertical up axis
     VerticalDownPhaseOffset;0.0;Phase offset for vertical down axis
@@ -178,8 +178,10 @@ def SetupLDV(f):
     Vt_samp_range;[0.0, 1000.0];Polar plot range (Vt samples)
     Vt_mean_range;[-1.5, 1.5];Polar plot range (Vt mean)
     Vt_sdev_range;[0.0, 0.5];Polar plot range (Vt rms)
+
+    ### VTK output
     Interpolation;thin_plate_spline;linear/thin_plate_spline/cubic/quintic/gaussian/none
-    Smoothing;0.0;Smoothing factor for interpolation
+    Smoothing;0.0001;Smoothing factor for interpolation (non-zero)
 
     ### Execution output setup
     Verbose;False;Verbose output
@@ -1848,38 +1850,31 @@ def ExportToVTKVtu(block, plane, orientation, sw, X):
     theta, rad, Vn, Vm, Vs = block
 
     Z = X / settings['Rref']
+    orientation = ('Up' if orientation == 'Vu' else 'Down' if orientation == 'Vd' else
+                   'Left' if orientation == 'Hl' else 'Right')
 
     x = rad * np.cos(theta)
     y = rad * np.sin(theta)
     points = np.vstack([x.flatten(), y.flatten()]).T
-    R = np.sqrt(points[:, 0]**2 + points[:, 1]**2)
+
+    if orientation in ['Left', 'Right']:
+        points = points*settings['RefractiveIndexCorrection']
 
     Points = np.vstack((points, (0, 0)))
     tri = Delaunay(Points)
     vtk_dataset = MakeVtkDataset(tri, Z)
 
-    orientation = ('Up' if orientation == 'Vu' else 'Down' if orientation == 'Vd' else
-                   'Left' if orientation == 'Hl' else 'Right')
     Lbl = ['Radial velocity (%s)' % orientation, 'Axial velocity (%s)' % orientation]
     if orientation in ['Left', 'Right']:
         Lbl = ['Tangential velocity (%s)' % orientation, 'Axial velocity (%s)' % orientation]
 
+    kernel = settings['Interpolation']
+    # ic(kernel)
+    # ic(settings['Smoothing'])
     for k, lbl in enumerate(Lbl):
 
         V = [Vn[k, :, :], Vm[k, :, :], Vs[k, :, :]]
 
-        # print('Interpolation:', settings['Interpolation'])
-        Pts = points.copy()
-        if orientation in ['Left', 'Right']:
-            Pts = Pts*settings['RefractiveIndexCorrection']
-        r = np.sqrt(Pts[:, 0]**2 + Pts[:, 1]**2)
-        Rmin = r.min()
-        Rmax = r.max()
-        # ic(Rmin, Rmax)
-
-        kernel = settings['Interpolation']
-        # ic(kernel)
-        # ic(settings['Smoothing'])
         for i in range(3):
 
             # ic(lbl, i)
@@ -1888,7 +1883,7 @@ def ExportToVTKVtu(block, plane, orientation, sw, X):
                 V[i] = v.copy()
             else:
                 cond = ~np.isnan(v)
-                pts = Pts[cond]
+                pts = points[cond]
                 v = v[cond]
 
                 # ic(v, len(v), pts, len(pts))
@@ -1897,11 +1892,6 @@ def ExportToVTKVtu(block, plane, orientation, sw, X):
                                          kernel=kernel)
 
                 V[i] = interp(points)
-
-            R = np.sqrt(points[:, 0]**2 + points[:, 1]**2)
-            cond = (R < Rmin) | (R > Rmax)
-            # cond = (R < Rmin)
-            V[i][cond] = np.nan
 
         for i in range(3):
             V[i] = np.append(V[i], [np.nan])

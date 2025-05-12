@@ -3,34 +3,35 @@
     Parameter;Value;Comment
 
     ### General input
-    RootPath;'/home/cisco/Documents/Insean/Projects/Yamaha/Measurements/Analysis/LDV/';Root path
-    DataPath;'Data/CRP1_LDV_FdF';Data path
-    OutputPath;'Analysis/CRP1_LDV_FdF';Output path
+    RootPath;'/home/cisco/Documents/Insean/Projects/Yamaha/Measurements/Processing';Root path
+    DataPath;'Data/CRP1_LDV';Data path
+    # OutputPath;'Analysis/CRP1_LDV/Analysis-J15/3-0';Output path
+    OutputPath;'Analysis/CRP1_LDV/Analysis';Output path
     Case;'unified-data';Case
     Rref;109.355;Reference radius in mm
+    RefractiveIndexCorrection;0.58;Refractive index correction (1.0 for no correction)
 
     ### Generation of database
     GenerateDatabase;False;True to generate database
     ExternalChannels;[1,2];List of external channels to load
     AxisScaleFactor;[1.0, -1.33, -1.0];Axis scale factor (X,Y,Z)
-    ExportCsv;False;Export to .csv files
+    ExportCsv;True;Export to .csv files
     ExportMat;False;Export to .mat files
 
     ### Phase analysis setup
     PhaseAnalysis;False;True to run phase analysis
     RadiusRange;[0,220];Radius range for analysis (in mm)
-    PlaneRange;[-1];Plane range for analysis (-1 for all planes)
-    nStd;4;Number of std to remove spurious data
-    Period;360.0;Modulo
-    Step;2.0;Step between slots
-    Wleft;1.0;Slot width to the left
-    Wright;1.0;Slot width to the right
+    PlaneRange;[0];Plane range for analysis (-1 for all planes)
+    nStd;3;Number of std to remove spurious data
+    Period;120.0;Modulo
+    Step;1.0;Step between slots
+    Wleft;1.25;Slot width to the left
+    Wright;1.25;Slot width to the right
     Overwrite;False;Overwrite existing VField files, otherwise skip
 
     ### Plot generation setup
     GeneratePolarPlots;True;True to generate polar plots
-    RotationSign;-1;Rotation sign (-1,+1)
-    RefractiveIndexCorrection;0.98;Refractive index correction (1.0 for no correction)
+    RotationSign;+1;Rotation sign (-1,+1)
     PolarPlotRadiusLimits;[0.2, 1.25];Radius limits for polar plots
     VerticalUpPhaseOffset;0.0;Phase offset for vertical up axis
     VerticalDownPhaseOffset;0.0;Phase offset for vertical down axis
@@ -46,7 +47,10 @@
     Vt_samp_range;[0.0, 1000.0];Polar plot range (Vt samples)
     Vt_mean_range;[-1.5, 1.5];Polar plot range (Vt mean)
     Vt_sdev_range;[0.0, 0.5];Polar plot range (Vt rms)
+
+    ### VTK output
     Interpolation;none;linear/thin_plate_spline/cubic/quintic/gaussian/none
+    Smoothing;0.0001;Smoothing factor for interpolation (non-zero)
 
     ### Execution output setup
     Verbose;False;Verbose output
