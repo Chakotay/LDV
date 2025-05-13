@@ -178,6 +178,7 @@ def SetupLDV(f):
     Vt_samp_range;[0.0, 1000.0];Polar plot range (Vt samples)
     Vt_mean_range;[-1.5, 1.5];Polar plot range (Vt mean)
     Vt_sdev_range;[0.0, 0.5];Polar plot range (Vt rms)
+    Colormap;viridis;Colormap for polar plots (viridis, plasma, inferno, magma, cividis, jet, rainbow)
 
     ### VTK output
     Interpolation;thin_plate_spline;linear/thin_plate_spline/cubic/quintic/gaussian/none
@@ -502,7 +503,7 @@ def ReadStatFiles(datafolder, case, verbose=False):
 
     if verbose:
         Display(Data)
-        display(Data.info())
+        ic(Data.info())
 
     return Data
 
@@ -526,14 +527,15 @@ def LoadStatFiles(verbose=False):
     #     return
 
     Data = ReadStatFiles(settings['DataFolder'], settings['Case'], verbose=verbose)
-    print(Data)
     if Data is None:
         print('No blocks found')
         sys.exit(0)
+    if verbose:
+        ic(Data)
 
     Block = Data['Block'].drop_duplicates().to_list()
     if verbose:
-        display(Block)
+        ic(Block)
     Data = Data.reset_index()
 
     # Change axis orientation and scaling
@@ -547,7 +549,7 @@ def LoadStatFiles(verbose=False):
     SaveFTH(settings['OutFolder'], '%s_Stats0' % settings['Case'], Data)
 
     if verbose:
-        display(Data.head())
+        ic(Data.head())
 
 
 # %% [Categorize into planes]
@@ -666,7 +668,7 @@ def FindPlanes(verbose=False):
     Data['Plane'] = Data['Plane'].astype(int)
     Data.sort_values(by=['Plane', 'Z (mm)', 'Y (mm)'], inplace=True, ascending=(True, False, False), ignore_index=True)
     if verbose:
-        display(Data)
+        ic(Data)
 
     SaveXLS(settings['OutFolder'], '%s_Stats1' % settings['Case'], Data)
     SaveFTH(settings['OutFolder'], '%s_Stats1' % settings['Case'], Data)
@@ -907,7 +909,7 @@ def FindMatches(verbose=False):
 
     Data.sort_values(by=['Plane', 'Point'], inplace=True, ascending=True, ignore_index=True)
     if verbose:
-        display(Data)
+        ic(Data)
 
     SaveXLS(settings['OutFolder'], '%s_Stats3' % settings['Case'], Data)
     SaveFTH(settings['OutFolder'], '%s_Stats3' % settings['Case'], Data)
@@ -932,9 +934,21 @@ def ReadCsv(block, src, Ch, file):
     """
 
     file = Path(settings['DataFolder'], block, 'CH%d' % src, file)
-    # display(file)
-    data = pd.read_csv(file, sep=',', skipinitialspace=True, skiprows=[0],
-                       header=0, nrows=None, low_memory=False)
+    # ic(file, src)
+
+    data = pd.DataFrame()
+    try:
+        data = pd.read_csv(file, sep=',', skipinitialspace=True, skiprows=[0],
+                           header=0, nrows=None, low_memory=False)
+    except FileNotFoundError:
+        print('FileNotFoundError: %s' % file)
+        return data
+    except pd.errors.ParserError:
+        print('ParserError: %s' % file)
+        return data
+    except pd.errors.EmptyDataError:
+        print('EmptyDataError: %s' % file)
+        return data
 
     # print(data.columns)
     data.rename(columns={"Velocity Ch.%d (m/sec)" % src: "Velocity Ch. %d (m/sec)" % src}, inplace=True)
@@ -1002,31 +1016,30 @@ def LoadPointData(point, verbose=False):
 
     ch1 = ReadCsv(block, 1, settings['ExternalChannels'], file)
     ch2 = ReadCsv(block, 2, settings['ExternalChannels'], file)
-    if verbose:
-        Display(ch1)
-        Display(ch2)
-    count01 = len(ch1)
-    count02 = len(ch2)
-    # display(ch1.info())
-    cols = ch1.columns[ch1.dtypes.eq('object')]
-    # print(cols)
-    ch1[cols] = ch1[cols].apply(pd.to_numeric, errors='coerce')
-    ch1.dropna(how='all', inplace=True)
-    ch1 = ch1.loc[ch1['Velocity Ch. 1 (m/sec)'].notnull()]
-    # display(ch1.info())
-    cols = ch2.columns[ch2.dtypes.eq('object')]
-    ch2[cols] = ch2[cols].apply(pd.to_numeric, errors='coerce')
-    ch2.dropna(how='all', inplace=True)
-    ch2 = ch2.loc[ch2['Velocity Ch. 2 (m/sec)'].notnull()]
-    # ch2.dropna(inplace=True)
-    # display(ch1.info(),ch2.info())
-    count11 = len(ch1)
-    count12 = len(ch2)
 
-    if count01 != count11:
-        print(">>> Non-numeric value in %s CH1" % file)
-    if count02 != count12:
-        print(">>> Non-numeric value in %s CH2" % file)
+    if verbose:
+        ic(ch1)
+        ic(ch2)
+
+    if not ch1.empty:
+        count01 = len(ch1)
+        cols = ch1.columns[ch1.dtypes.eq('object')]
+        ch1[cols] = ch1[cols].apply(pd.to_numeric, errors='coerce')
+        ch1.dropna(how='all', inplace=True)
+        ch1 = ch1.loc[ch1['Velocity Ch. 1 (m/sec)'].notnull()]
+        count11 = len(ch1)
+        if count01 != count11:
+            print(">>> Non-numeric value in %s CH1" % file)
+
+    if not ch2.empty:
+        count02 = len(ch2)
+        cols = ch2.columns[ch2.dtypes.eq('object')]
+        ch2[cols] = ch2[cols].apply(pd.to_numeric, errors='coerce')
+        ch2.dropna(how='all', inplace=True)
+        ch2 = ch2.loc[ch2['Velocity Ch. 2 (m/sec)'].notnull()]
+        count12 = len(ch2)
+        if count02 != count12:
+            print(">>> Non-numeric value in %s CH2" % file)
 
     return [ch1, ch2]
 
@@ -1063,17 +1076,16 @@ def ChannelToComponent(currow, ch, v, verbose):
         offset = 180.0
     if currow['Orientation'].values[0] == 'Hr':
         offset = 270.0
-    ch[0]['RMR1 (degree)'] = ch[0]['RMR1 (degree)'].apply(lambda x: np.mod(x+offset, 360))
-    ch[1]['RMR2 (degree)'] = ch[1]['RMR2 (degree)'].apply(lambda x: np.mod(x+offset, 360))
-
-    ch[1]['Velocity Ch. 2 (m/sec)'] = ch[1]['Velocity Ch. 2 (m/sec)'].apply(lambda x: -x)
 
     if len(ch[0]):
+        ch[0]['RMR1 (degree)'] = ch[0]['RMR1 (degree)'].apply(lambda x: np.mod(x+offset, 360))
         if len(v[0]) == 0:
             v[0] = ch[0][v[0].columns].copy()
         else:
             v[0] = pd.concat([v[0], ch[0]], axis=0, join='inner').dropna(how='all')
     if len(ch[1]):
+        ch[1]['RMR2 (degree)'] = ch[1]['RMR2 (degree)'].apply(lambda x: np.mod(x+offset, 360))
+        ch[1]['Velocity Ch. 2 (m/sec)'] = ch[1]['Velocity Ch. 2 (m/sec)'].apply(lambda x: -x)
         if len(v[1]) == 0:
             v[1] = ch[1][v[1].columns].copy()
         else:
@@ -1114,11 +1126,11 @@ def GetPointVelocity(currow, v, verbose):
     for i, lbl in enumerate(Lbl):
 
         v = V[i].dropna(how='all')
-        if len(v) < 2:
+        if len(v) < 1:
             continue
         mean = np.mean(v[lbl])
         std_deviation = np.std(v[lbl], axis=0)
-        V[i] = v.drop(v[v[lbl]-mean > settings['nStd'] * std_deviation].index)
+        V[i] = v.drop(v[np.abs(v[lbl]-mean) > settings['nStd'] * std_deviation]. index)
 
     return V
 
@@ -2003,7 +2015,7 @@ def PlotVStatsPolar(block, plane, orientation, sw, X, show=False):
     theta, rad, Vn, Vm, Vs = block
 
     alpha = 1.0
-    cmap = cm.jet
+    cmap = mpl.colormaps[settings['Colormap']]
 
     if 'V' in orientation:
         Range_V1 = [settings['Vr_samp_range'], settings['Vr_mean_range'], settings['Vr_sdev_range']]
@@ -2054,7 +2066,7 @@ def PlotVStatsPolar(block, plane, orientation, sw, X, show=False):
             # print(vmin, vmax)
 
             fact = 1.0
-            if lbl[-1] == 'Axial velocity':
+            if orientation in ['Left', 'Right']:
                 fact = settings['RefractiveIndexCorrection']
             norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
 
@@ -2181,7 +2193,7 @@ def PolarPlots(verbose=False, show=False):
 
                     statfile = Path(datafolder, '%s_Stats_%s_P%06d' % (settings['Case'], sw, row['Point']))
                     statfile = statfile.with_suffix('.csv')
-                    # print(irow, statfile)
+                    # ic(irow, statfile)
                     if statfile.exists():
                         vstat = pd.read_csv(statfile)
                         if irow == 0:
