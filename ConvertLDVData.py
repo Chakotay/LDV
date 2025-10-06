@@ -3,58 +3,21 @@
 import sys
 from pathlib import Path
 
-import matplotlib as mpl
-import matplotlib.pyplot as plt
-from matplotlib import cm
-import matplotlib.colors as mcolors
-from matplotlib.colorbar import ColorbarBase
-from matplotlib.patches import Rectangle
-from matplotlib.collections import PatchCollection
-
-# Import numpy
 import numpy as np
-import numpy.core._multiarray_umath
-import scipy.io as io
 from scipy.interpolate import RBFInterpolator
 from scipy.spatial import Delaunay
 
-import scipy.cluster.hierarchy as shc
-from sklearn.cluster import AgglomerativeClustering
-import vtk
-import vtkmodules.util.data_model
-import vtkmodules.util.execution_model
+from vtk import vtkDoubleArray, vtkPoints, vtkDelaunay3D, vtkUnstructuredGrid, vtkXMLUnstructuredGridWriter, vtkMultiBlockDataSet, vtkXMLMultiBlockDataWriter
 
 # Import pandas
 import pandas as pd
-import pyarrow
-import openpyxl
 
 # from tqdm.notebook import tqdm
 from tqdm import tqdm
 
 from IPython.display import display
-import timeit
 from icecream import ic
 from textwrap import dedent
-
-import pyvista as pv
-
-# %% [Graphical setup]
-# %matplotlib qt
-# %matplotlib --list
-# %matplotlib inline
-plt.isinteractive()
-# mpl.use('gtk4agg')
-# mpl.use('kitcat')
-# plt.rc('font', family='sans-serif')
-# plt.rc('text', usetex=True)
-# plt.rcParams['text.latex.preamble'] = [
-#       r'\usepackage{siunitx}',   # i need upright \micro symbols, but you need...
-#       r'\sisetup{detect-all}',   # ...this to force siunitx to actually use your fonts
-#       r'\usepackage{helvet}',    # set the normal font here
-#       r'\usepackage{sansmath}',  # load up the sansmath so that math -> helvet
-#       r'\sansmath'               # <- tricky! -- gotta actually tell tex to use!
-# ]
 
 pd.set_option('display.float_format', '{:.6e}'.format)
 pd.set_option('expand_frame_repr', False)
@@ -109,6 +72,7 @@ def SetupLDV(f):
     PhaseAnalysis;True;True to run phase analysis
     RadiusRange;[0,220];Radius range for analysis (in mm)
     PlaneRange;[1];Plane range for analysis (-1 for all planes)
+    SkipPlanes;[-1];Skip these planes (default: -1 for no exclusion)
     nStd;4.0;Number of std to remove spurious data
     Period;360.0;Modulo
     Step;2.0;Step between slots
@@ -119,7 +83,7 @@ def SetupLDV(f):
     ### Plot generation setup
     GeneratePolarPlots;True;True to generate polar plots
     RotationSign;-1;Rotation sign (-1,+1)
-    RefractiveIndexCorrection;0.98;Refractive index correction (1.0 for no correction)
+    RefractiveIndexCorrection;0.8;Refractive index correction (1.0 for no correction)
     PolarPlotRadiusLimits;[0.2, 1.25];Radius limits for polar plots
     VerticalUpPhaseOffset;0.0;Phase offset for vertical up axis
     VerticalDownPhaseOffset;0.0;Phase offset for vertical down axis
@@ -247,7 +211,7 @@ def RunSettings(filename):
             raise ValueError(f"The list for {value} is empty.")
         Settings.at[value, 'Value'] = [float(a) for a in lst]
 
-    Values = ['ExternalChannels', 'PlaneRange']
+    Values = ['ExternalChannels', 'PlaneRange', 'SkipPlanes']
     for value in Values:
         lst = Settings.at[value, 'Value']
         lst = list(lst.strip('[]').split(','))
@@ -297,92 +261,74 @@ def SetIntervals(period, step, width_left, width_right):
     return (intervals, centers)
 
 
-def ExportToVTKVtu(block, plane, orientation, X):
+def calculate_vorticity_cylindrical(df, u_col, v_col, w_col):
     """
-    Exports data to a VTK (.vtu) file format.
-    Parameters:
-    block (tuple): A tuple containing theta, rad, Vn, Vm, Vs arrays.
-    row (dict): A dictionary containing metadata for the current row, including 'Orientation' and 'Plane'.
-    X (float): A scalar value used for normalization.
+    Calculates the vorticity vector in cylindrical coordinates.
+
+    Args:
+        df (pd.DataFrame): DataFrame with columns 'R', 'Angular position (deg)', 'X', u_col, v_col, w_col.
+        u_col (str): Column name for the radial velocity component (u).
+        v_col (str): Column name for the tangential velocity component (v).
+        w_col (str): Column name for the axial velocity component (w).
+
     Returns:
-    None
-    The function performs the following steps:
-    1. Constructs the output folder path based on settings.
-    2. Extracts and normalizes the radial and axial coordinates.
-    3. Creates a Delaunay triangulation of the points.
-    4. Determines the orientation and labels for the velocity components.
-    5. Interpolates the velocity data if the orientation is 'Left' or 'Right'.
-    6. Adds the velocity data arrays to the VTK dataset.
-    7. Writes the VTK dataset to a .vtu file.
+        pd.DataFrame: DataFrame with added columns 'vorticity_r', 'vorticity_theta', 'vorticity_z'.
+                      Returns None if input is invalid.
     """
 
-    sw = 'S%04dW%04d' % (settings['Step']*100, settings['Wslot']*100)
-    outfolder = Path(settings['OutFolder'], 'PolarStats', sw, 'Vtk')
-    outfolder.mkdir(exist_ok=True)
+    if not all(col in df.columns for col in ['R', 'Angular position (deg)', 'X', u_col, v_col, w_col]):
+        print("Error: DataFrame must contain columns 'R', 'Angular position (deg)', 'X', u_col, v_col, w_col.")
+        return None
 
-    theta, rad, Vn, Vm, Vs = block
+    r = df['R'].values
+    theta = np.deg2rad(df['Angular position (deg)'].values)  # Convert degrees to radians
+    x = df['X'].values
+    u = df[u_col].values
+    v = df[v_col].values
+    w = df[w_col].values
 
-    Z = X / settings['Rref']
+    ic(r, theta, x)
+    # Calculate partial derivatives using NumPy's gradient function.  This assumes a reasonably structured grid.
+    # For highly unstructured data, consider more sophisticated interpolation methods.
+    dr = np.gradient(r)
+    dtheta = np.gradient(theta)
+    dx = np.gradient(x)
 
-    x = rad * np.cos(theta)
-    y = rad * np.sin(theta)
-    # z = np.full((x.shape[0], x.shape[1]), Z)
-    points = np.vstack([x.flatten(), y.flatten()]).T
-    points = np.vstack((points, (0, 0)))
+    ic(dr, dtheta, dx)
 
-    tri = Delaunay(points)
-    vtk_dataset = MakeVtkDataset(tri, Z)
+    du_dtheta = np.gradient(u, dtheta)
+    du_dx = np.gradient(u, dx)
+    dv_dx = np.gradient(v, dx)
+    dw_dr = np.gradient(w, dr)
 
-    orientation = ('Up' if orientation == 'Vu' else 'Down' if orientation == 'Vd' else
-                   'Left' if orientation == 'Hl' else 'Right')
-    Lbl = ['Radial velocity (%s)' % orientation, 'Axial velocity (%s)' % orientation]
-    if orientation in ['Left', 'Right']:
-        Lbl = ['Tangential velocity (%s)' % orientation, 'Axial velocity (%s)' % orientation]
+    # Vorticity components
+    vorticity_r = (1/r) * (np.gradient(r*w, dtheta) - dv_dx)
+    vorticity_theta = (du_dx - dw_dr)
+    vorticity_x = (1/r) * (np.gradient(r*v, dr) - du_dtheta)
 
-    for k, lbl in enumerate(Lbl):
-
-        V = [Vn[k, :, :], Vm[k, :, :], Vs[k, :, :]]
-
-        # print('Interpolation:', settings['Interpolation'])
-        if settings['Interpolation'] != 'none' and orientation in ['Left', 'Right']:
-            fact = settings['RefractiveIndexCorrection']
-            kernel = settings['Interpolation']
-            # ic(kernel)
-
-            pts = np.vstack([rad.flatten()*fact, theta.flatten()]).T
-            Rmin = pts[:, 0].min()
-            Rmax = pts[:, 0].max()
-            for i in range(3):
-
-                v = V[i].flatten()
-                cond = ~np.isnan(v)
-                Pts = pts[cond]
-                v = v[cond]
-                interp = RBFInterpolator(Pts, v,
-                                         smoothing=0.1,
-                                         kernel=kernel)
-                Pts = np.vstack([rad.flatten(), theta.flatten()]).T
-
-                V[i] = interp(Pts)
-
-                cond = (Pts[:, 0] < Rmin) | (Pts[:, 0] > Rmax)
-                V[i][cond] = np.nan
-
-        for i in range(3):
-            V[i] = np.append(V[i], [0])
-
-        vtk_dataset = AddArray(vtk_dataset, lbl,
-                               [V[0], V[1], V[2]],
-                               ['Count', 'Mean', 'RMS'])
-
-    writer = vtkXMLUnstructuredGridWriter()
-    outfile = '%s_Stats_%s_%s_P%02d' % (settings['Case'], sw, orientation, plane)
-    writer.SetFileName(Path(outfolder, outfile).with_suffix('.vtu'))
-    writer.SetInputData(vtk_dataset)
-    writer.Write()
+    return vorticity_r, vorticity_theta, vorticity_x
 
 
-def Slice(Planes, dir, datafolder, outfolder, sw, nx=10, ny=10, verbose=False):
+def calculate_magnitude(axis0, axis1, axis2):
+
+    return np.sqrt(axis0**2 + axis1**2 + axis2**2)
+
+
+def calculate_tke(axial, radial, tangential):
+    """
+    Calculates the turbulent kinetic energy (TKE) from the velocity components.
+    Args:
+        axial (np.ndarray): Axial velocity component.
+        radial (np.ndarray): Radial velocity component.
+        tangential (np.ndarray): Tangential velocity component.
+    Returns:
+        np.ndarray: The calculated TKE.
+    """
+    return 0.5 * (axial**2 + radial**2 + tangential**2)
+
+
+    # %% [Slice functions
+def Slice(Planes, dir, sw, datafolder, outfolder, nx=10, nr=10, smooth=0.0, verbose=False):
 
     # Statfile = [item for item in datafolder.iterdir()]
     # print(Statfile)
@@ -405,6 +351,17 @@ def Slice(Planes, dir, datafolder, outfolder, sw, nx=10, ny=10, verbose=False):
                                                        'Ch. 1 samples', 'Ch. 1 mean', 'Ch. 1 sdev',
                                                        'Ch. 2 samples', 'Ch. 2 mean', 'Ch. 2 sdev'])
 
+            offset = 0
+            match orient:
+                case 'Up':
+                    offset = settings['VerticalUpPhaseOffset']
+                case 'Down':
+                    offset = settings['VerticalDownPhaseOffset']
+                case 'Left':
+                    offset = settings['HorizontalLeftPhaseOffset']
+                case 'Right':
+                    offset = settings['HorizontalRightPhaseOffset']
+
             cond0 = (Data['Orientation'] == orientation)
             cond1 = (Data['R (mm)'] > 0.0)
             for plane in Planes['id'][::]:
@@ -418,27 +375,40 @@ def Slice(Planes, dir, datafolder, outfolder, sw, nx=10, ny=10, verbose=False):
                 count = 0
                 data.reset_index(drop=True, inplace=True)
                 for irow, row in data.iterrows():
-                    R = row['R (mm)'] / settings['Rref']
+                    # R = row['R (mm)'] / settings['Rref']
+                    R = row['R (mm)'] * 1e-3
                     if R < 1e-6:
                         continue
-                    Xp = row['X (mm)'] / settings['Rref']
+                    # Xp = row['X (mm)'] / settings['Rref']
+                    Xp = row['X (mm)'] * 1e-3
 
                     statfile = Path(datafolder, '%s_Stats_%s_P%06d' % (settings['Case'], sw, row['Point']))
                     statfile = statfile.with_suffix('.csv')
 
                     if statfile.exists():
-                        vstat = pd.read_csv(statfile)
-                        vstat['R'] = R
-                        vstat['X'] = Xp
-                        # ic(irow, len(vstat), len(vstats))
-                        if count == 0:
-                            vstatp = vstat.copy()
-                        else:
-                            vstatp = pd.concat([vstatp, vstat], ignore_index=True)
-                        count += 1
-                    else:
-                        print('File not found:', statfile)
-                        continue
+                        # vstat = pd.DataFrame()
+                        try:
+                            vstat = pd.read_csv(statfile)
+
+                            vstat['R'] = R * settings['RefractiveIndexCorrection']
+                            vstat['X'] = -Xp # minus sign to convert to right-handed system
+
+                            vstat['Angular position (deg)'] += offset
+                            # ic(irow, len(vstat), len(vstats))
+                            if count == 0:
+                                vstatp = vstat.copy()
+                            else:
+                                vstatp = pd.concat([vstatp, vstat], ignore_index=True)
+                            count += 1
+
+                        except pd.errors.ParserError:
+                            print('ParserError: %s' % statfile)
+                            continue
+
+                        except pd.errors.EmptyDataError:
+                            print('EmptyDataError: %s' % statfile)
+                            continue
+
                         # if verbose:
                         #     print('Missing %s (file index %d)' % (statfile, irow))
                         # if irow == 0:
@@ -453,14 +423,16 @@ def Slice(Planes, dir, datafolder, outfolder, sw, nx=10, ny=10, verbose=False):
                     print('%d of %d points missing for %s (%s) in plane %d' % (len(data)-count, len(data), orient, orientation, plane))
                 ic(dir.name, orient, plane, len(data), count)
 
-                vstatp['Y'] = vstatp['R'] * np.cos(np.deg2rad(vstatp['Angular position (deg)']))
-                vstatp['Z'] = vstatp['R'] * np.sin(np.deg2rad(vstatp['Angular position (deg)']))
+                cos = np.cos(np.deg2rad(vstatp['Angular position (deg)']))
+                sin = np.sin(np.deg2rad(vstatp['Angular position (deg)']))
+                vstatp['Y'] = vstatp['R'] * cos
+                vstatp['Z'] = vstatp['R'] * sin
                 vstatp.sort_values(by=['Angular position (deg)', 'R', 'X'], inplace=True)
                 vstatp.reset_index(drop=True, inplace=True)
 
                 rad = vstatp['R'].to_numpy()
                 theta = vstatp['Angular position (deg)'].to_numpy()
-                pts = np.vstack([theta, rad]).T
+                pts = np.vstack([rad, theta]).T
 
                 for i in [1, 2]:
                     if orient in ['Up', 'Down']:
@@ -475,6 +447,7 @@ def Slice(Planes, dir, datafolder, outfolder, sw, nx=10, ny=10, verbose=False):
                     Var = [[f'Ch. {i} samples', vn], [f'Ch. {i} mean', vm], [f'Ch. {i} sdev', vs]]
                     for var in Var:
                         chi, cho = var
+                        ic(chi)
 
                         v = vstatp[chi].to_numpy()
                         # np.nan_to_num(v, copy=False)
@@ -483,7 +456,7 @@ def Slice(Planes, dir, datafolder, outfolder, sw, nx=10, ny=10, verbose=False):
                         # ic(ch, len(v))
 
                         interp = RBFInterpolator(pts[cond], v[cond],
-                                                 smoothing=0.05,
+                                                 smoothing=smooth,
                                                  kernel=settings['Interpolation'])
                         # ic(interp.kernel)
 
@@ -519,18 +492,31 @@ def Slice(Planes, dir, datafolder, outfolder, sw, nx=10, ny=10, verbose=False):
             if ymax < vstats[orient]['R'].max():
                 ymax = vstats[orient]['R'].max()
         X = np.linspace(xmin, xmax, nx)
-        Y = np.linspace(ymin, ymax, ny)
+        Y = np.linspace(ymin, ymax, nr)
         ic(X, Y)
-        dX = (xmax - xmin)/(len(X)-1)
-        dY = (ymax - ymin)/(len(Y)-1)
-        ic(dX, dY)
+        dx = np.abs(X[1]-X[0])
+        dr = np.abs(Y[1]-Y[0])
+        da = np.abs(Intervals[1].right - Intervals[0].right)
+        ic(dx, dr, da)
+        rda = np.deg2rad(da) * Y
+        ic(rda)
+        dX = np.full((nr, nx), dx)
+        dR = np.full((nr, nx), dr)
+        rdA = np.tile(np.array([rda]).T, (1, nx))
+        ic(dX, dX[:, 0])
+        ic(dR, dR[0, :])
+        ic(rdA, rdA[0, :], rdA[:, 0])
 
         Xi, Yi = np.meshgrid(X, Y)
         xi = Xi.flatten()
         yi = Yi.flatten()
 
+        Vol = pd.DataFrame()
         for interval in Intervals[::]:
             new_slice = True
+            Slice = pd.DataFrame()
+            ic(interval)
+
             for orient in vstats.keys():
                 # ic('key:', orient)
 
@@ -574,14 +560,15 @@ def Slice(Planes, dir, datafolder, outfolder, sw, nx=10, ny=10, verbose=False):
                     vs = 'RMS %s velocity (%s)' % (comp, orient)
                     Var = [vn, vm, vs]
                     for var in Var:
-
+                        # ic(var)
+                        
                         v = slice[var].to_numpy()
                         # np.nan_to_num(v, copy=False)
                         cond = ~np.isnan(v)
                         # ic(var, np.count_nonzero(cond))
 
                         interp = RBFInterpolator(pts[cond], v[cond],
-                                                 smoothing=0.0,
+                                                 smoothing=smooth,
                                                  kernel=settings['Interpolation'])
                         # ic(interp.kernel)
 
@@ -591,78 +578,373 @@ def Slice(Planes, dir, datafolder, outfolder, sw, nx=10, ny=10, verbose=False):
                         Slice = pd.concat([Slice, pd.DataFrame({var: V.T})], axis=1)
                         # ic(Slice)
 
-            Slice['Velocity magnitude (Up)'] = np.sqrt(
-                Slice['Mean axial velocity (Up)']**2 +
-                Slice['Mean radial velocity (Up)']**2 +
-                Slice['Mean tangential velocity (Left)']**2)
-            Slice['Velocity magnitude (Left)'] = np.sqrt(
-                Slice['Mean axial velocity (Left)']**2 +
-                Slice['Mean radial velocity (Up)']**2 +
-                Slice['Mean tangential velocity (Left)']**2)
+            Slice['Velocity magnitude (Up)'] = calculate_magnitude(Slice['Mean axial velocity (Up)'],
+                                                                   Slice['Mean radial velocity (Up)'],
+                                                                   Slice['Mean tangential velocity (Left)'])
+            Slice['Velocity magnitude (Left)'] = calculate_magnitude(Slice['Mean axial velocity (Left)'],
+                                                                     Slice['Mean radial velocity (Up)'],
+                                                                     Slice['Mean tangential velocity (Left)'])
 
-            Vort = {'Mean axial vorticity': ['Mean tangential velocity (Left)', 'Mean radial velocity (Up)'],
-                    'Mean radial vorticity (Up)': ['Mean axial velocity (Up)', 'Mean tangential velocity (Left)'],
-                    'Mean radial vorticity (Left)': ['Mean axial velocity (Left)', 'Mean tangential velocity (Left)'],
-                    'Mean tangential vorticity (Up)': ['Mean radial velocity (Up)', 'Mean axial velocity (Up)'],
-                    'Mean tangential vorticity (Left)': ['Mean radial velocity (Up)', 'Mean axial velocity (Left)']}
+            Slice['TKE partial (Up)'] = calculate_tke(Slice['RMS axial velocity (Up)'],
+                                                      Slice['RMS radial velocity (Up)'], 0)
+            Slice['TKE partial (Left)'] = calculate_tke(Slice['RMS axial velocity (Left)'],
+                                                        Slice['RMS tangential velocity (Left)'], 0)
+            Slice['TKE total (Up)'] = calculate_tke(Slice['RMS axial velocity (Up)'],
+                                                    Slice['RMS radial velocity (Up)'],
+                                                    Slice['RMS tangential velocity (Left)'])
+            Slice['TKE total (Left)'] = calculate_tke(Slice['RMS axial velocity (Left)'],
+                                                      Slice['RMS radial velocity (Up)'],
+                                                      Slice['RMS tangential velocity (Left)'])
+
+            Vort = {'Mean axial vorticity': ['Mean tangential velocity (Left)', 'Mean radial velocity (Up)', dR, rdA],
+                    'Mean radial vorticity (Up)': ['Mean axial velocity (Up)', 'Mean tangential velocity (Left)', rdA, dX],
+                    'Mean radial vorticity (Left)': ['Mean axial velocity (Left)', 'Mean tangential velocity (Left)', rdA, dX],
+                    'Mean tangential vorticity (Up)': ['Mean radial velocity (Up)', 'Mean axial velocity (Up)', dX, dR],
+                    'Mean tangential vorticity (Left)': ['Mean radial velocity (Up)', 'Mean axial velocity (Left)', dX, dR]}
+
             for vort in Vort.keys():
                 # ic(vort, Vort[vort], Vort[vort][0], Vort[vort][1], dX, dY)
                 u = Slice[Vort[vort][0]].to_numpy()
                 v = Slice[Vort[vort][1]].to_numpy()
+                dy = Vort[vort][2]
+                dx = Vort[vort][3]
                 # ic(u.shape, v.shape)
-                u = np.reshape(u, (ny, nx))
-                v = np.reshape(v, (ny, nx))
+                u = np.reshape(u, (nr, nx))
+                v = np.reshape(v, (nr, nx))
                 # ic(u.shape, v.shape)
-                du = np.gradient(u, dY, axis=0, edge_order=2)
-                dv = np.gradient(v, dX, axis=1, edge_order=2)
-                Slice[vort] = (dv - du).flatten()
-            Slice['Vorticity magnitude (Up)'] = np.sqrt(
-                Slice['Mean axial vorticity']**2 +
-                Slice['Mean radial vorticity (Up)']**2 +
-                Slice['Mean tangential vorticity (Up)']**2)
-            Slice['Vorticity magnitude (Left)'] = np.sqrt(
-                Slice['Mean axial vorticity']**2 +
-                Slice['Mean radial vorticity (Left)']**2 +
-                Slice['Mean tangential vorticity (Left)']**2)
+                # ic(dx, len(dx), dy, len(dy))
+                du = np.gradient(u/dy, 1.0, axis=0, edge_order=2)
+                dv = np.gradient(v/dx, 1.0, axis=1, edge_order=2)
+                Slice[vort] = (du - dv).flatten()
 
-            Slice['TKE (Up)'] = (
-                Slice['RMS axial velocity (Up)']**2 +
-                Slice['RMS radial velocity (Up)']**2 +
-                Slice['RMS tangential velocity (Left)']**2)/2
-
-            Slice['TKE (Left)'] = (
-                Slice['RMS axial velocity (Left)']**2 +
-                Slice['RMS radial velocity (Up)']**2 +
-                Slice['RMS tangential velocity (Left)']**2)/2
+            Slice['Vorticity magnitude (Up)'] = calculate_magnitude(Slice['Mean axial vorticity'],
+                                                                    Slice['Mean radial vorticity (Up)'],
+                                                                    Slice['Mean tangential vorticity (Up)'])
+            Slice['Vorticity magnitude (Left)'] = calculate_magnitude(Slice['Mean axial vorticity'],
+                                                                      Slice['Mean radial vorticity (Left)'],
+                                                                      Slice['Mean tangential vorticity (Left)'])
 
             if interval == Intervals[0]:
                 Vol = Slice.copy()
-            else:
-                Vol = pd.concat([Vol, Slice], ignore_index=True)
 
-        vol = Vol.copy()
-        ic(Vol['Angular position (deg)'])
-        for rep in np.arange(1, reps):
-            rot = vol['Angular position (deg)'] + settings['Period']
-            cos = np.cos(np.deg2rad(rot))
-            sin = np.sin(np.deg2rad(rot))
-            vol['Angular position (deg)'] = rot
-            vol['Y'] = vol['R']*cos
-            vol['Z'] = vol['R']*sin
-            Vol = pd.concat([Vol, vol], ignore_index=True)
+                # Add periodic slice to close 3d gap
+                cos = np.cos(np.deg2rad(settings['Period']))
+                sin = np.sin(np.deg2rad(settings['Period']))
+                r = Slice['R'].to_numpy()
+                Slice['Y'] = r * cos
+                Slice['Z'] = r * sin
+                
+            Vol = pd.concat([Vol, Slice], ignore_index=True)
 
-        X = Vol['X'].to_numpy().flatten()
-        x = np.unique(X)
-        zeros = np.zeros(len(x))
-        Zero = pd.DataFrame([x, zeros, zeros]).T
-        Zero.columns = ['X', 'Y', 'Z']
-        Vol = pd.concat([Vol, Zero])
+        Vol = Vol.reset_index(drop=True)
 
         return Vol
 
 
+# %% [Velocity gradient tensor]
+def calculate_velocity_gradient_from_dataframe_cylindrical(df, u, v, w):
+    """
+    Calculates the velocity gradient tensor from a Pandas DataFrame
+    containing cylindrical coordinates and velocity components.
+
+    Args:
+        df (pd.DataFrame): DataFrame with columns 'r', 'theta', 'z', 'u', 'v', 'w'.
+                           It is assumed that the data points represent a structured
+                           grid in cylindrical coordinates, although the spacing
+                           may be non-uniform. The DataFrame should be sortable
+                           in a way that reflects the grid structure (e.g.,
+                           sorted by z, then theta, then r).
+
+    Returns:
+        numpy.ndarray: 5D array representing the velocity gradient tensor Dv_ij
+                       with shape (nr, ntheta, nz, 3, 3), where nr, ntheta, nz
+                       are the number of unique values in 'r', 'theta', and 'z'
+                       respectively. The last two dimensions correspond to the
+                       (i, j) components in the cylindrical basis (r, theta, z).
+                       Returns None if the input DataFrame is not suitable.
+    """
+    # if not all(col in df.columns for col in ['r', 'theta', 'z', 'u', 'v', 'w']):
+    #     print("Error: DataFrame must contain columns 'r', 'theta', 'z', 'u', 'v', 'w'.")
+    #     return None
+
+
+    df['R'] = np.trunc(df['R']*1e6)/1e6
+    df['Angular position (deg)'] = np.trunc(df['Angular position (deg)']*1e6)/1e6
+    df['X'] = np.trunc(df['X']*1e6)/1e6
+
+    r_unique = np.unique(df['R'].values)
+    theta_unique = np.unique(df['Angular position (deg)'].values)
+    theta_unique = np.append(theta_unique, settings['Period'])  # Close the loop
+    x_unique = np.unique(df['X'].values)
+    nr, ntheta, nx = len(r_unique), len(theta_unique), len(x_unique)
+    ic(nr, ntheta, nx)
+    ic(r_unique, theta_unique, x_unique)
+    ic(len(r_unique), len(theta_unique), len(x_unique))
+
+    Dv = np.zeros((nr, ntheta, nx, 3, 3))
+
+    r_indices = np.searchsorted(r_unique, df['R'].values)
+    theta_indices = np.searchsorted(theta_unique, df['Angular position (deg)'].values)
+    x_indices = np.searchsorted(x_unique, df['X'].values)
+    ic(r_indices, theta_indices, x_indices)
+
+    u_grid = np.zeros((nr, ntheta, nx))
+    v_grid = np.zeros((nr, ntheta, nx))
+    w_grid = np.zeros((nr, ntheta, nx))
+
+    u_grid[r_indices, theta_indices, x_indices] = df[u].values
+    v_grid[r_indices, theta_indices, x_indices] = df[v].values
+    w_grid[r_indices, theta_indices, x_indices] = df[w].values
+
+    # Handle periodicity in theta by copying the first slice to the last
+    u_grid[r_indices, -1, x_indices] = u_grid[r_indices, 0, x_indices]
+    v_grid[r_indices, -1, x_indices] = v_grid[r_indices, 0, x_indices]
+    w_grid[r_indices, -1, x_indices] = w_grid[r_indices, 0, x_indices]
+
+    # Derivatives with respect to r
+    du_dr = np.zeros_like(u_grid, dtype=float)
+    dv_dr = np.zeros_like(v_grid, dtype=float)
+    dw_dr = np.zeros_like(w_grid, dtype=float)
+    for j in range(ntheta):
+        for k in range(nx):
+            du_dr[:, j, k] = np.gradient(u_grid[:, j, k], r_unique)
+            dv_dr[:, j, k] = np.gradient(v_grid[:, j, k], r_unique)
+            dw_dr[:, j, k] = np.gradient(w_grid[:, j, k], r_unique)
+
+    ic(du_dr)
+
+    # Derivatives with respect to theta
+    du_dtheta = np.zeros_like(u_grid, dtype=float)
+    dv_dtheta = np.zeros_like(v_grid, dtype=float)
+    dw_dtheta = np.zeros_like(w_grid, dtype=float)
+    theta_unique_rad = np.deg2rad(theta_unique)
+    for i in range(nr):
+        for k in range(nx):
+            du_dtheta[i, :, k] = np.gradient(u_grid[i, :, k], theta_unique_rad)
+            dv_dtheta[i, :, k] = np.gradient(v_grid[i, :, k], theta_unique_rad)
+            dw_dtheta[i, :, k] = np.gradient(w_grid[i, :, k], theta_unique_rad)
+
+    # Derivatives with respect to z
+    du_dx = np.zeros_like(u_grid, dtype=float)
+    dv_dx = np.zeros_like(v_grid, dtype=float)
+    dw_dx = np.zeros_like(w_grid, dtype=float)
+    for i in range(nr):
+        for j in range(ntheta):
+            du_dx[i, j, :] = np.gradient(u_grid[i, j, :], x_unique)
+            dv_dx[i, j, :] = np.gradient(v_grid[i, j, :], x_unique)
+            dw_dx[i, j, :] = np.gradient(w_grid[i, j, :], x_unique)
+
+    # Construct the velocity gradient tensor components
+    # Extract velocity gradient components
+    Dv[..., 0, 0] = du_dr
+    Dv[..., 0, 1] = du_dtheta
+    Dv[..., 0, 2] = du_dx
+    Dv[..., 1, 0] = dv_dr
+    Dv[..., 1, 1] = dv_dtheta
+    Dv[..., 1, 2] = dv_dx
+    Dv[..., 2, 0] = dw_dr
+    Dv[..., 2, 1] = dw_dtheta
+    Dv[..., 2, 2] = dw_dx
+
+    R_grid, theta_grid, x_grid = np.meshgrid(r_unique, theta_unique, x_unique, indexing='ij')
+    Coord = np.stack((R_grid, theta_grid, x_grid), axis=-1)
+
+    velocity = np.stack((u_grid, v_grid, w_grid), axis=-1)
+    vel_norm = np.linalg.norm(velocity, axis=-1)
+    Vel = np.stack((u_grid, v_grid, w_grid, vel_norm), axis=-1)
+
+    Div = (1 / R_grid) * (np.gradient((R_grid * u_grid), r_unique, axis=0)[0]) + (1 / R_grid) * dv_dtheta + dw_dx
+
+    return Vel, Dv, Coord, Div
+
+
+# %% [Symmetric and antisymmetric tensors]
+
+
+def decompose_velocity_gradient(Vel, Dv, Coord):
+    """
+    Decomposes the velocity gradient tensor into its symmetric (strain rate)
+    and antisymmetric (vorticity) parts.
+
+    Args:
+        Dv (numpy.ndarray): 5D array representing the velocity gradient tensor
+                           with shape (nr, ntheta, nz, 3, 3).
+
+    Returns:
+        tuple: A tuple containing two numpy.ndarrays:
+               - S (numpy.ndarray): Symmetric part (strain rate tensor) with the same shape as Dv.
+               - Omega (numpy.ndarray): Antisymmetric part (vorticity tensor) with the same shape as Dv.
+    """
+
+    nr, ntheta, nx, _, _ = Dv.shape
+    r = Coord[..., 0]
+    Grad = np.zeros((nr, ntheta, nx, 3, 3))
+
+    u = Vel[..., 0]
+    v = Vel[..., 1]
+
+    du_dr = Dv[..., 0, 0]
+    du_dtheta = Dv[..., 0, 1]
+    du_dx = Dv[..., 0, 2]
+    dv_dr = Dv[..., 1, 0]
+    dv_dtheta = Dv[..., 1, 1]
+    dv_dx = Dv[..., 1, 2]
+    dw_dr = Dv[..., 2, 0]
+    dw_dtheta = Dv[..., 2, 1]
+    dw_dx = Dv[..., 2, 2]
+
+    Grad[..., 0, 0] = du_dr
+    Grad[..., 0, 1] = (1 / r) * (du_dtheta - v)
+    Grad[..., 0, 2] = du_dx
+    Grad[..., 1, 0] = dv_dr
+    Grad[..., 1, 1] = (1 / r) * (dv_dtheta + u)
+    Grad[..., 1, 2] = dv_dx
+    Grad[..., 2, 0] = dw_dr
+    Grad[..., 2, 1] = (1 / r) * dw_dtheta
+    Grad[..., 2, 2] = dw_dx
+
+    Omega = np.zeros((nr, ntheta, nx, 3, 3))
+    S = np.zeros((nr, ntheta, nx, 3, 3))
+    ic(Omega.shape, S.shape)
+
+    # Calculate vorticity tensor components
+    Omega[..., 0, 1] = 0.5 * (Grad[..., 0, 1] - Grad[..., 1, 0])
+    Omega[..., 0, 2] = 0.5 * (Grad[..., 0, 2] - Grad[..., 2, 0])
+    Omega[..., 1, 0] = -Omega[..., 0, 1]
+    Omega[..., 1, 2] = 0.5 * (Grad[..., 1, 1] - Grad[..., 2, 1])
+    Omega[..., 2, 0] = -Omega[..., 0, 2]
+    Omega[..., 2, 1] = -Omega[..., 1, 2]
+
+    # Calculate strain rate tensor components
+    S[..., 0, 0] = 0.5 * (Grad[..., 0, 0] + Grad[..., 0, 0])
+    S[..., 0, 1] = 0.5 * (Grad[..., 0, 1] + Grad[..., 1, 0])
+    S[..., 0, 2] = 0.5 * (Grad[..., 0, 2] + Grad[..., 2, 0])
+    S[..., 1, 0] = S[..., 0, 1]  # Symmetry
+    S[..., 1, 1] = 0.5 * (Grad[..., 1, 1] + Grad[..., 1, 1])
+    S[..., 1, 2] = 0.5 * (Grad[..., 1, 2] + Grad[..., 2, 1])
+    S[..., 2, 0] = S[..., 0, 2]  # Symmetry
+    S[..., 2, 1] = S[..., 1, 2]  # Symmetry
+    S[..., 2, 2] = 0.5 * (Grad[..., 2, 2] + Grad[..., 2, 2])
+
+    return S, Omega
+
+
+def calculate_frobenius_norm(tensor):
+    """
+    Calculates the Frobenius norm of a tensor.
+
+    Args:
+        tensor (numpy.ndarray): A tensor with shape (..., M, N), where the Frobenius norm is calculated over the last two dimensions.
+
+    Returns:
+        numpy.ndarray: The Frobenius norm of the tensor, with shape (...).
+    """
+    return np.sqrt(np.sum(tensor**2, axis=(-2, -1)))
+
+
+def calculate_q_criterion(S, Omega):
+    """Calculates the Q-criterion from the strain rate and vorticity tensors.
+
+    Args:
+        S (numpy.ndarray): Strain rate tensor with shape (..., 3, 3).
+        Omega (numpy.ndarray): Vorticity tensor with shape (..., 3, 3).
+
+    Returns:
+        numpy.ndarray: Q-criterion with shape (...).
+    """
+
+    S_norm = calculate_frobenius_norm(S)
+    Omega_norm = calculate_frobenius_norm(Omega)
+    Q = 0.5 * (Omega_norm**2 - S_norm**2)
+
+    return Q
+
+
+def calculate_vorticity_vector(Dv, Coord):
+    """
+    Calculates the vorticity vector from the velocity gradient tensor in cylindrical coordinates.
+
+    Args:
+        Dv (numpy.ndarray): Velocity gradient tensor with shape (nr, ntheta, nx, 3, 3).
+        r (numpy.ndarray): Radial coordinates with shape (nr, ntheta, nx).
+        theta (numpy.ndarray): Azimuthal coordinates with shape (nr, ntheta, nx) in radians.
+        x (numpy.ndarray): Axial coordinates with shape (nr, ntheta, nx).
+
+    Returns:
+        numpy.ndarray: Vorticity vector with shape (nr, ntheta, nx, 3).
+    """
+
+    r = Coord[..., 0]
+
+    du_dr = Dv[..., 0, 0]
+    du_dtheta = Dv[..., 0, 1]
+    du_dx = Dv[..., 0, 2]
+    dv_dr = Dv[..., 1, 0]
+    dv_dtheta = Dv[..., 1, 1]
+    dv_dx = Dv[..., 1, 2]
+    dw_dr = Dv[..., 2, 0]
+    dw_dtheta = Dv[..., 2, 1]
+    dw_dx = Dv[..., 2, 2]
+
+    # Calculate vorticity components
+    vorticity_r = (1 / r) * dw_dtheta - dv_dx
+    vorticity_theta = du_dx - dw_dr
+    vorticity_x = (1 / r) * (dv_dr - du_dtheta)
+
+    # Combine vorticity components into a vector
+    vorticity = np.stack([vorticity_r, vorticity_theta, vorticity_x], axis=-1)
+    vorticity_norm = np.linalg.norm(vorticity, axis=-1)
+    Vort = np.stack([vorticity_r, vorticity_theta, vorticity_x, vorticity_norm], axis=-1)
+    ic(Vort.shape)
+
+    return Vort
+
+
 # %% [VTU export]
-def CreateVtkDataset(Vol, volvtu):
+
+
+def AddScalarArray(vtk_dataset, name, data, cnames):
+
+    npoints = data.shape[0]
+    narrays = 1
+    if len(data.shape) > 1:
+        narrays = data.shape[1]
+
+    array = vtkDoubleArray()
+    array.SetName(name)
+    array.SetNumberOfComponents(narrays)
+    array.SetNumberOfTuples(npoints)
+
+    ic(data)
+    if narrays > 1:
+        for i, cname in enumerate(cnames):
+            array.SetComponentName(i, cname)
+        for i, val in enumerate(data):
+            array.SetTuple(i, val)
+    else:
+        for i, val in enumerate(data):
+            array.SetTuple1(i, val)
+    vtk_dataset.GetPointData().AddArray(array)
+
+    return vtk_dataset
+
+
+def AddTensorArray(vtk_dataset, name, cname, data):
+    array = vtkDoubleArray()
+    array.SetName(name)
+    array.SetNumberOfComponents(9)
+    for i in range(3):
+        for j in range(3):
+            array.SetComponentName(3*i + j, f'{cname}_{i}{j}')
+    array.SetNumberOfTuples(len(data))
+    for i, tensor in enumerate(data):
+        array.SetTuple(i, tensor)
+    vtk_dataset.GetPointData().AddArray(array)
+
+    return vtk_dataset
+
+
+def ExportDatasetToVTK(Vol, outfile):
     """
     Creates a VTK unstructured grid dataset from a Delaunay triangulation and a specified z-coordinate.
     Parameters:
@@ -672,7 +954,16 @@ def CreateVtkDataset(Vol, volvtu):
     vtkUnstructuredGrid: A VTK unstructured grid dataset with the specified points and triangles.
     """
 
-    Vol.sort_values(by=['X', 'R', 'Angular position (deg)'], inplace=True)
+    X = Vol['X'].to_numpy().flatten()
+    x = np.unique(X)
+    zeros = np.zeros(len(x))
+    ic(x, zeros, len(x))
+
+    Zero = pd.DataFrame([x, zeros, zeros]).T
+    Zero.columns = ['X', 'Y', 'Z']
+    Vol = pd.concat([Vol, Zero])
+
+    Vol.sort_values(by=['R', 'Angular position (deg)', 'X'], inplace=True)
     # Vol = Vol.sample(frac=1.0, random_state=1, ignore_index=True)
     Vol.reset_index(drop=True, inplace=True)
 
@@ -681,14 +972,19 @@ def CreateVtkDataset(Vol, volvtu):
     Z = Vol['Z'].to_numpy().flatten()
     pts = list(np.vstack([X, Y, Z]).T)
 
-    points = vtk.vtkPoints()
+    points = vtkPoints()
+    rng = np.random.default_rng()
     for id, pt in enumerate(pts):
-        x, y, z = pt
-        x = x + np.random.rand()/1e3
+        x, y, z = pt #/ (settings['Rref'] * 1e-3)
 
+        x = x + (2*rng.random() - 1)/1e6
+        y = y + (2*rng.random() - 1)/1e6
+        z = z + (2*rng.random() - 1)/1e6
+
+        # ic(x, y, z)
         points.InsertPoint(id, [x, y, z])
 
-    vtk_dataset = vtk.vtkUnstructuredGrid()
+    vtk_dataset = vtkUnstructuredGrid()
     vtk_dataset.SetPoints(points)
 
     axial = [var for var in Vol.columns if 'axial velocity' in var.lower()]
@@ -705,82 +1001,183 @@ def CreateVtkDataset(Vol, volvtu):
            [turbulence, 'TKE']]
     for var in Var:
         cnames, lbl = var
-        ic(len(Vol[cnames[0]]))
+        # ic(len(Vol[cnames[0]]))
         V = []
         for cname in cnames:
+            ic(cname)
             vol = Vol[cname].to_numpy().flatten()
-            ic(len(vol), vol)
+            # ic(len(vol), vol)
             if cname == cnames[0]:
                 V = [vol]
             else:
                 V.append(vol)
-            ic(len(V), V)
-        vtk_dataset = AddArray(vtk_dataset, lbl, V, cnames)
+            # ic(len(V), V)
+        V = np.vstack(V).T
+        vtk_dataset = AddScalarArray(vtk_dataset, lbl, V, cnames)
 
     # tri = Delaunay(pts, qhull_options='QJ')
     # ic(tri)
     # vtk_dataset.Allocate(tri.nsimplex)
     # for point_ids in tri.simplices:
-    #     vtk_dataset.InsertNextCell(vtk.VTK_TRIANGLE, 4, point_ids)
+    #     vtk_dataset.InsertNextCell(VTK_TRIANGLE, 4, point_ids)
 
-    delaunay = vtk.vtkDelaunay3D()
+    ic(settings['Interpolation'], settings['Smoothing'])
+    print('Running Delaunay...')
+    delaunay = vtkDelaunay3D()
+    # delaunay.SetTolerance(0.01)
     delaunay.SetInputData(vtk_dataset)
     delaunay.Update()
 
-    writer = vtk.vtkXMLUnstructuredGridWriter()
-    writer.SetFileName(volvtu)
+    writer = vtkXMLUnstructuredGridWriter()
+    writer.SetFileName(outfile)
     writer.SetInputConnection(delaunay.GetOutputPort())
     # writer.SetInputData(vtk_dataset)
     writer.Write()
 
 
-def AddArray(vtk_dataset, name, data, cnames):
-    """
-    Adds a named array to a VTK dataset.
-    Parameters:
-    vtk_dataset (vtk.vtkDataSet): The VTK dataset to which the array will be added.
-    name (str): The name of the array to be added.
-    data (list or numpy.ndarray): The data to be added to the array. Should be a list or array of values.
-    cnames (list of str): The names of the components in the array.
-    Returns:
-    vtk.vtkDataSet: The VTK dataset with the added array.
-    """
+def ExportTensorsToVTK(Dv, coordinates, Vel, Div, Vort, S, Omega, Q, outfile):
+    """Exports strain rate, vorticity, and Q-criterion tensors to a VTK file."""
 
-    npoints = vtk_dataset.GetNumberOfPoints()
-    ndata = len(data)
+    # Create points from coordinates
+    ic(coordinates.shape)
+    pts = coordinates.reshape(-1, 3)
+    x_unique = np.unique(pts[:, 2])
+    ic(x_unique, len(x_unique))
+    zero = np.zeros((len(x_unique), 3))
+    zero[:, 2] = x_unique
+    pts = np.vstack([pts, zero])
+    ic(pts, pts.shape)
 
-    ic(vtk_dataset.GetNumberOfPoints())
-    array = vtk.vtkDoubleArray()
-    array.SetName(name)
-    array.SetNumberOfComponents(ndata)
-    ic(array.GetNumberOfComponents())
-    for i, cname in enumerate(cnames):
-        array.SetComponentName(i, cname)
+    points = vtkPoints()
+    rng = np.random.default_rng()
+    for id, pt in enumerate(pts):
+        x, y, z = pt #/ (settings['Rref'] * 1e-3)
 
-    array.SetNumberOfTuples(npoints)
-    dat = np.dstack((data)).reshape(npoints, ndata)
-    # print(dat)
-    for i, val in enumerate(dat):
-        # print(val)
-        array.SetTuple(i, val)
-    vtk_dataset.GetPointData().AddArray(array)
+        x = x + (2*rng.random() - 1)/1e6
+        y = y + (2*rng.random() - 1)/1e6
+        z = z + (2*rng.random() - 1)/1e6
 
-    return vtk_dataset
+        cos = np.cos(np.deg2rad(y))
+        sin = np.sin(np.deg2rad(y))
+        points.InsertPoint(id, [z, x*cos, x*sin])
+
+    vtk_dataset = vtkUnstructuredGrid()
+    vtk_dataset.SetPoints(points)
+
+    # Reshape tensors to match the number of points
+    Div = Div.reshape(-1)
+    Q = Q.reshape(-1)
+    Vel = Vel.reshape(-1, 4)
+    Vort = Vort.reshape(-1, 4)
+    S = S.reshape(-1, 9)
+    Omega = Omega.reshape(-1, 9)
+
+    ic(Div.shape, Q.shape, Vel.shape, Vort.shape, S.shape, Omega.shape)
+
+    # Add NaN entries for the added zero points
+    Div = np.hstack([Div, np.full(len(x_unique), np.nan)])
+    Q = np.hstack([Q, np.full(len(x_unique), np.nan)])
+    nand = np.full((1, 4), np.nan).flatten()
+    Vel = np.vstack([Vel, np.tile(nand, (len(x_unique), 1))])
+    Vort = np.vstack([Vort, np.tile(nand, (len(x_unique), 1))])
+    nand = np.full((3, 3), np.nan).flatten()
+    S = np.vstack([S, np.tile(nand, (len(x_unique), 1))])
+    Omega = np.vstack([Omega, np.tile(nand, (len(x_unique), 1))])
+
+    ic(Div.shape, Q.shape, Vel.shape, Vort.shape, S.shape, Omega.shape)
+    # Add tensors to VTK dataset
+    AddScalarArray(vtk_dataset, 'Velocity', Vel[:, :3], ['Radial', 'Tangential', 'Axial']) # no magnitude
+    AddScalarArray(vtk_dataset, 'Vorticity', Vort[:, :3], ['Radial', 'Tangential', 'Axial']) # no magnitude
+    AddScalarArray(vtk_dataset, "Divergence", Div, None)
+
+    AddTensorArray(vtk_dataset, "Strain tensor", 'S', S)
+    AddTensorArray(vtk_dataset, "Vorticity tensor", 'Omega', Omega)
+    AddScalarArray(vtk_dataset, "Q", Q, None)
+
+    ic(settings['Interpolation'], settings['Smoothing'])
+    print('Running Delaunay...')
+    delaunay = vtkDelaunay3D()
+    # delaunay.SetTolerance(0.01)
+    delaunay.SetInputData(vtk_dataset)
+    delaunay.Update()
+
+    # Write VTK file
+    writer = vtkXMLUnstructuredGridWriter()
+    writer.SetFileName(outfile)
+    writer.SetInputConnection(delaunay.GetOutputPort())
+    writer.Write()
+
+
+def ExportTensorsToCSV(Dv, coordinates, Vel, Div, Vort, S, Omega, Q, outfile):
+    """Exports strain rate, vorticity, and Q-criterion tensors to a CSV file."""
+    nr, ntheta, nx, _, _ = Dv.shape
+    ic(nr, ntheta, nx)
+    R = coordinates[..., 0].flatten()
+    Theta = coordinates[..., 1].flatten()
+    X = coordinates[..., 2].flatten()
+    Y = R * np.cos(np.deg2rad(Theta))
+    Z = R * np.sin(np.deg2rad(Theta))
+    ic(R, Theta, X)
+    data = {
+        'R': R,
+        'Angular position (deg)': Theta,
+        'X': X,
+        'Y': Y,
+        'Z': Z,
+    }
+    axis = ['radial', 'tangential', 'axial', 'magnitude']
+    for i in range(4):
+        data[f'Velocity ({axis[i]})'] = Vel[..., i].flatten()
+    data['Divergence'] = Div.flatten()
+    for i in range(4):
+        data[f'Vorticity ({axis[i]})'] = Vel[..., i].flatten()
+
+    for i in range(3):
+        for j in range(3):
+            data[f'S_{i}{j}'] = S[..., i, j].flatten()
+    for i in range(3):
+        for j in range(3):
+            data[f'Omega_{i}{j}'] = Omega[..., i, j].flatten()
+    data['Q'] = Q.flatten()
+
+    df = pd.DataFrame(data)
+    df.to_csv(outfile, index=False)
+
+
+def Derivatives(vol, Qcsv, Qvtu):
+
+    Vel, Dv, Coord, Div = calculate_velocity_gradient_from_dataframe_cylindrical(vol,
+                                                                                 'Mean radial velocity (Up)',
+                                                                                 'Mean tangential velocity (Left)',
+                                                                                 'Mean axial velocity (Up)')
+    ic(Dv.shape)
+    S, Omega = decompose_velocity_gradient(Vel, Dv, Coord)
+    Q = calculate_q_criterion(S, Omega)
+    ic(S.shape, Omega.shape, Q.shape)
+
+    Vort = calculate_vorticity_vector(Dv, Coord)
+
+    ExportTensorsToCSV(Dv, Coord, Vel, Div, Vort, S, Omega, Q, Qcsv)
+    ExportTensorsToVTK(Dv, Coord, Vel, Div, Vort, S, Omega, Q, Qvtu)
+
 
 # %% [Main]
 args = [arg for arg in sys.argv[1:] if not arg.startswith('-')]
 ic(args, len(args))
 
-if len(args) != 3:
-    print('Usage: %s <settings file> <nx> <ny>' % Path(__file__).name)
+if len(args) != 5:
+    print('Usage: %s <settings file> <nx> <nr> <start index> <end index>' % Path(__file__).name)
     sys.exit(0)
 else:
     settings_filename = args[0]
     nx = int(args[1])
-    ny = int(args[2])
+    nr = int(args[2])
+    d0 = int(args[3])
+    d1 = int(args[4])
+
 global settings
 settings = RunSettings(settings_filename)
-# display(settings)
+display(settings)
 
 SourceFolder = Path(settings['RootPath'], settings['OutputPath']).parent
 ic(SourceFolder)
@@ -789,6 +1186,7 @@ volfolder.mkdir(exist_ok=True)
 
 dirs = [item for item in SourceFolder.iterdir() if item.is_dir() and '-' in item.name]
 dirs = sorted(dirs, key=lambda x: int((x.name).split('-')[1]))
+ic(dirs)
 
 DataPath = Path(settings['OutFolder'], '%s_Stats5.fth' % settings['Case'])
 if not DataPath.exists():
@@ -800,19 +1198,24 @@ Data = pd.read_feather(DataPath)
 seen = set()
 Planes = pd.DataFrame(columns=['id', 'x'])
 for x in Data['Plane']:
+    if x in settings['SkipPlanes']:
+        continue
     if x not in seen:
         xp = Data.loc[Data['Plane'] == x, 'X (mm)'].mean()
         Planes.loc[len(Planes)] = {'id': x, 'x': xp}
         seen.add(x)
-Planes = Planes[:5]
 Planes.sort_values(by=['x'], ascending=False, inplace=True)
 Planes.reset_index(drop=True, inplace=True)
+ic(Planes)
+# Planes = Planes[20:41]
 
 ic("%d planes:" % len(Planes), Planes)
 
 sw = 'S%04dW%04d' % (settings['Step']*100, settings['Wslot']*100)
+ic(sw)
+
 with tqdm(total=len(dirs), dynamic_ncols=True, desc=dirs[0].name) as pbar:
-    for dir in dirs[::]:
+    for dir in dirs[d0:d1:]:
         pbar.desc = dir.name
         pbar.update(1)
 
@@ -821,13 +1224,31 @@ with tqdm(total=len(dirs), dynamic_ncols=True, desc=dirs[0].name) as pbar:
         outfolder = Path(datafolder, 'Slice')
         outfolder.mkdir(exist_ok=True)
 
-        volfile = Path(volfolder, 'Vol-%s' % dir.name)
-        volcsv = Path(volfile.with_suffix('.csv'))
-        if not volcsv.exists():
-            Vol = Slice(Planes, dir, datafolder, outfolder, sw, nx, ny, settings['Verbose'])
-            Vol.to_csv(volcsv, index=False)
-        else:
-            Vol = pd.read_csv(volcsv)
+        angle = int((dir.name).split('-')[1])
+        Vcsv = Path(volfolder, 'Vol_V%03d' % angle).with_suffix('.csv')
+        Vvtu = Path(volfolder, 'Vol_V%03d' % angle).with_suffix('.vtu')
+        Qcsv = Path(volfolder, 'Vol_Q%03d' % angle).with_suffix('.csv')
+        Qvtu = Path(volfolder, 'Vol_Q%03d' % angle).with_suffix('.vtu')
+        ic(Vcsv, Vcsv.exists(), Vvtu, Vvtu.exists())
+        if not Vcsv.exists():
+            print('Creating %s' % Vcsv)
 
-        volvtu = Path(volfile.with_suffix('.vtu'))
-        CreateVtkDataset(Vol, volvtu)
+            Vol = Slice(Planes, dir, sw, datafolder, outfolder, nx, nr, settings['Smoothing'], settings['Verbose'])
+            Vol.to_csv(Vcsv, index=False)
+            ExportDatasetToVTK(Vol, Vvtu)
+
+            Derivatives(Vol, Qcsv, Qvtu)
+
+        else:
+            Vol = pd.read_csv(Vcsv)
+            if not Vvtu.exists():
+                print('Creating %s' % Vvtu)
+
+                ExportDatasetToVTK(Vol, Vvtu)
+
+                Derivatives(Vol, Qcsv, Qvtu)
+            else:
+                if not Qvtu.exists():
+                    print('Creating %s' % Qvtu)
+
+                    Derivatives(Vol, Qcsv, Qvtu)
